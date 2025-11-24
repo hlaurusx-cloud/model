@@ -13,8 +13,8 @@ from sklearn.metrics import (
     accuracy_score, auc, roc_curve, confusion_matrix,
     mean_absolute_error, mean_squared_error, r2_score
 )
-# 导入sklearn内置数据集（用于示例）
-from sklearn.datasets import load_iris, load_boston, load_wine
+# 替换 load_boston 为 fetch_california_housing
+from sklearn.datasets import load_iris, load_wine, fetch_california_housing
 import warnings
 warnings.filterwarnings("ignore")
 
@@ -95,7 +95,7 @@ if st.session_state.step == 0:
     
     ### 예제 데이터 설명
     - **분류 예제**：와인 품질 분류 데이터（13개 특징，2개 클래스）
-    - **회귀 예제**：보스턴 주택 가격 데이터（13개 특징，주택 가격 예측）
+    - **회귀 예제**：캘리포니아 주택 가격 데이터（8개 특징，주택 가격 예측）
     
     ### 왼쪽「데이터 업로드」를 클릭하여 사용을 시작하세요！
     """)
@@ -169,7 +169,7 @@ elif st.session_state.step == 1:
             "예제 데이터 종류",
             options=[
                 "분류 예제：와인 품질 분류（logit 작업용）",
-                "회귀 예제：보스턴 주택 가격（의사결정나무 작업용）"
+                "회귀 예제：캘리포니아 주택 가격（의사결정나무 작업용）"
             ],
             index=0
         )
@@ -191,10 +191,10 @@ elif st.session_state.step == 1:
         else:
             st.markdown("""
             **데이터 설명**：
-            - 데이터 소스：sklearn 내장 보스턴 주택 가격 데이터셋（Boston Housing）
-            - 데이터 크기：506 행 × 14 열（13개 특징 + 1개 타겟）
-            - 특징 변수：범죄율、학군 비율、방 개수等 지역 속성
-            - 타겟 변수：주택 가격 중앙값（단위：1,000 달러）- 연속값 회귀
+            - 데이터 소스：sklearn 내장 캘리포니아 주택 가격 데이터셋（California Housing）
+            - 데이터 크기：20,640 행 × 9 열（8개 특징 + 1개 타겟）
+            - 특징 변수：거주자 평균 소득、가구 수、방 개수等 지역 속성
+            - 타겟 변수：주택 가격 중앙값（단위：10만 달러）- 연속값 회귀
             """)
             # 자동으로 작업 유형을 의사결정나무（회귀）로 설정
             if st.session_state.task != "의사결정나무":
@@ -220,17 +220,17 @@ elif st.session_state.step == 1:
                     ]
                 
                 else:
-                    # 보스턴 주택 가격 데이터 로드
-                    boston = load_boston()
-                    df_merged = pd.DataFrame(data=boston.data, columns=boston.feature_names)
-                    df_merged["house_price"] = boston.target  # 타겟 열 추가
+                    # 캘리포니아 주택 가격 데이터 로드（替代波士顿数据）
+                    california = fetch_california_housing()
+                    df_merged = pd.DataFrame(data=california.data, columns=california.feature_names)
+                    df_merged["house_price"] = california.target  # 타겟 열 추가（단위：10만 달러）
                     # 컬럼명 한글화（사용자 편의）
                     df_merged.columns = [
-                        "범죄율", "25,000평방피트 이상 주거지역 비율", "비소매 상업지역 비율", "강변 위치",
-                        "일산화질소 농도", "거주자 평균 방 개수", "1940년 이전 건축된 주택 비율",
-                        "고용센터까지 거리", "고속도로 접근성", "재산세율", "학생-교사 비율",
-                        "인구 중 흑인 비율", "하위 계층 비율", "주택 가격 중앙값（타겟）"
+                        "거주자 평균 소득", "주택 연령 중앙값", "총 방 개수", "총 침실 개수",
+                        "인구 수", "가구 수", "위도", "경도", "주택 가격 중앙값（타겟）"
                     ]
+                    # 데이터 샘플링（20,000행 너무 많아 1000행으로 축소，시각화 및 학습 속도 향상）
+                    df_merged = df_merged.sample(n=1000, random_state=42).reset_index(drop=True)
                 
                 # 데이터 저장（标记为示例数据）
                 st.session_state.data["merged"] = df_merged
@@ -448,7 +448,7 @@ elif st.session_state.step == 3:
                 # 와인 데이터 타겟 열："와인 품질（타겟）"
                 default_target_idx = target_options.index("와인 품질（타겟）") if "와인 품질（타겟）" in target_options else 0
             else:
-                # 보스턴 데이터 타겟 열："주택 가격 중앙값（타겟）"
+                # 캘리포니아 데이터 타겟 열："주택 가격 중앙값（타겟）"
                 default_target_idx = target_options.index("주택 가격 중앙값（타겟）") if "주택 가격 중앙값（타겟）" in target_options else 0
         
         target_col = st.selectbox(
@@ -660,9 +660,11 @@ elif st.session_state.step == 5:
                                 default_value = 2.5
                             elif "회분" in col:
                                 default_value = 2.0
-                            # 보스턴 데이터（회귀）기본값
-                            elif "범죄율" in col:
-                                default_value = 0.5
+                            # 캘리포니아 데이터（회귀）기본값
+                            elif "거주자 평균 소득" in col:
+                                default_value = 3.5
+                            elif "주택 연령 중앙값" in col:
+                                default_value = 30.0
                             elif "방 개수" in col:
                                 default_value = 6.0
                             elif "주택 가격" not in col:  # 타겟 열이 아닌 경우
@@ -682,7 +684,7 @@ elif st.session_state.step == 5:
                     st.metric("예측 결과", "좋은 와인（양성）" if pred[0] == 1 else "일반 와인（음성）")
                     st.metric("양성 확률", f"{proba[0]:.3f}" if proba is not None else "-")
                 else:
-                    st.metric("주택 가격 예측 결과", f"{pred[0]:.2f} thousand 달러")
+                    st.metric("주택 가격 예측 결과", f"{pred[0]:.2f} × 10만 달러")
         
         # 일괄 업로드 예측
         else:
@@ -818,14 +820,14 @@ elif st.session_state.step == 6:
         else:
             with col1:
                 st.markdown("### 예측값 vs 실제값（하이브리드모형）")
-                fig_pred = px.scatter(x=y_test, y=mixed_pred, title="실제 주택 가격 vs 예측 가격", labels={"x": "실제 가격", "y": "예측 가격"})
+                fig_pred = px.scatter(x=y_test, y=mixed_pred, title="실제 주택 가격 vs 예측 가격", labels={"x": "실제 가격（10만 달러）", "y": "예측 가격（10만 달러）"})
                 fig_pred.add_trace(go.Scatter(x=[y_test.min(), y_test.max()], y=[y_test.min(), y_test.max()], line_color="red", name="이상적인 피팅 라인"))
                 st.plotly_chart(fig_pred, use_container_width=True)
             
             with col2:
                 st.markdown("### 잔차 그래프（하이브리드모형）")
                 residuals = y_test - mixed_pred
-                fig_res = px.scatter(x=mixed_pred, y=residuals, title="예측 가격 vs 잔차", labels={"x": "예측 가격", "y": "잔차"})
+                fig_res = px.scatter(x=mixed_pred, y=residuals, title="예측 가격 vs 잔차", labels={"x": "예측 가격（10만 달러）", "y": "잔차"})
                 fig_res.add_trace(go.Scatter(x=[mixed_pred.min(), mixed_pred.max()], y=[0, 0], line_color="red", name="잔차=0 라인"))
                 st.plotly_chart(fig_res, use_container_width=True)
         
