@@ -7,12 +7,14 @@ import plotly.graph_objects as go
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler, LabelEncoder, OneHotEncoder
 from sklearn.impute import SimpleImputer
-from sklearn.linear_model import LinearRegression, LogisticRegression  # 回归分析核心模型
-from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor  # 决策树核心模型
+from sklearn.linear_model import LinearRegression, LogisticRegression
+from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
 from sklearn.metrics import (
     accuracy_score, auc, roc_curve, confusion_matrix,
     mean_absolute_error, mean_squared_error, r2_score
 )
+# 导入sklearn内置数据集（用于示例）
+from sklearn.datasets import load_iris, load_boston, load_wine
 import warnings
 warnings.filterwarnings("ignore")
 
@@ -25,15 +27,14 @@ st.set_page_config(
     layout="wide"
 )
 
-# 전역 상태 관리（각 단계 데이터/모델 저장，새로고침 시 손실 방지）
+# 전역 상태 관리（新增示例数据标识）
 if "step" not in st.session_state:
     st.session_state.step = 0  # 0:초기화면 1:데이터업로드 2:데이터시각화 3:데이터전처리 4:모델학습 5:예측 6:평가
 if "data" not in st.session_state:
-    st.session_state.data = {"merged": None}  # 단일 파일만 저장
+    st.session_state.data = {"merged": None, "is_sample": False}  # is_sample：是否使用示例数据
 if "preprocess" not in st.session_state:
     st.session_state.preprocess = {"imputer": None, "scaler": None, "encoders": None, "feature_cols": None, "target_col": None}
 if "models" not in st.session_state:
-    # 模型：regression（회귀분석）、decision_tree（의사결정나무）
     st.session_state.models = {"regression": None, "decision_tree": None, "mixed_weights": {"regression": 0.3, "decision_tree": 0.7}}
 if "task" not in st.session_state:
     st.session_state.task = "logit"  # 기본값 logit（분류），의사결정나무（회귀）로 전환 가능
@@ -44,7 +45,7 @@ if "task" not in st.session_state:
 st.sidebar.title("📌 하이브리드모형 작업 흐름")
 st.sidebar.divider()
 
-# 단계导航 버튼（新增「데이터 시각화」단계）
+# 단계导航 버튼
 steps = ["초기 설정", "데이터 업로드", "데이터 시각화", "데이터 전처리", "모델 학습", "모델 예측", "성능 평가"]
 for i, step_name in enumerate(steps):
     if st.sidebar.button(step_name, key=f"btn_{i}"):
@@ -69,143 +70,234 @@ if st.session_state.step >= 4:  # 모델 학습 후 가중치 조정 가능
 # 3. 메인 페이지：단계별 내용 표시
 # ----------------------
 st.title("📊 하이브리드모형 동적 배포 프레임워크")
-st.markdown("**단일 원본 데이터 파일 업로드 후，시각화→전처리→학습→예측 전과정을 한 번에 완성**")
+st.markdown("**단일 원본 데이터 파일 업로드 또는 예제 데이터로，시각화→전처리→학습→예측 전과정을 한 번에 완성**")
 st.markdown("### 🧩 핵심 모델：회귀 분석（Regression）+ 의사결정나무（Decision Tree）")
 st.divider()
 
 # ----------------------
-# 단계 0：초기 설정（안내 페이지）
+#  단계 0：초기 설정（안내 페이지 - 新增示例数据说明）
 # ----------------------
 if st.session_state.step == 0:
     st.subheader("🎉 하이브리드모형 동적 프레임워크에 오신 것을 환영합니다")
     st.markdown("""
-    본 프레임워크는 **데이터 수령 후 직접 업로드하여 사용**할 수 있으며，사전 전처리나 모델 학습이 필요 없습니다. 핵심 흐름은 다음과 같습니다：
+    본 프레임워크는 **데이터 수령 후 직접 업로드**하거나 **미리 제공된 예제 데이터**로 사용할 수 있으며，사전 전처리나 모델 학습이 필요 없습니다. 핵심 흐름은 다음과 같습니다：
     
-    1. **데이터 업로드**：단일 원본 파일（CSV/Parquet/Excel）을 업로드
+    1. **데이터 선택**：자신의 데이터 업로드 또는 예제 데이터 사용
     2. **데이터 시각화**：범주형 변수와 수치형 변수를 선택하여 다양한 그래프로 데이터 탐색
     3. **데이터 전처리**：결측값 채우기、범주형 특징 인코딩
     4. **모델 학습**：「회귀 분석+의사결정나무」하이브리드모형 학습
     5. **모델 예측**：단일 데이터 입력 또는 일괄 업로드 예측을 지원
     6. **성능 평가**：하이브리드모형과 단일 모형의 성능을 비교
     
-    ### 적용 가능 환경
+    ### 적용 가능场景
     - logit 작업（분류）：사용자가 서비스를 수락할지 여부、위반 여부等 이진 예측（모델：로지스틱 회귀+분류 의사결정나무）
     - 의사결정나무 작업（회귀）：판매량、금액、평점等 연속값 예측（모델：선형 회귀+회귀 의사결정나무）
+    
+    ### 예제 데이터 설명
+    - **분류 예제**：와인 품질 분류 데이터（13개 특징，2개 클래스）
+    - **회귀 예제**：보스턴 주택 가격 데이터（13개 특징，주택 가격 예측）
     
     ### 왼쪽「데이터 업로드」를 클릭하여 사용을 시작하세요！
     """)
 
 # ----------------------
-# 단계 1：데이터 업로드（단일 파일만 업로드）
+#  단계 1：데이터 업로드（新增示例数据功能）
 # ----------------------
 elif st.session_state.step == 1:
-    st.subheader("📤 데이터 업로드（단일 파일）")
-    st.markdown("지원 형식：CSV、Parquet、Excel（.xlsx/.xls）")
-    st.markdown("⚠️  파일에 타겟 열（예측할 변수）과 특징 열（예측에 사용할 변수）이 모두 포함되어야 합니다")
+    st.subheader("📤 데이터 선택（자신의 데이터 업로드 또는 예제 데이터 사용）")
     
-    # 단일 파일 업로드 컴포넌트
-    uploaded_file = st.file_uploader("데이터 파일 선택", type=["csv", "parquet", "xlsx", "xls"], key="single_file")
+    # 탭 분할：자신의 데이터 / 예제 데이터
+    tab1, tab2 = st.tabs(["📁 자신의 데이터 업로드", "📊 예제 데이터 사용"])
     
-    if uploaded_file is not None:
-        try:
-            # 다양한 형식 파일 읽기
-            if uploaded_file.name.endswith(".csv"):
-                df_merged = pd.read_csv(uploaded_file)
-            elif uploaded_file.name.endswith(".parquet"):
-                df_merged = pd.read_parquet(uploaded_file)
-            elif uploaded_file.name.endswith((".xlsx", ".xls")):
-                df_merged = pd.read_excel(uploaded_file)
-            else:
-                st.error("지원하지 않는 파일 형식입니다！CSV/Parquet/Excel 파일을 업로드하세요")
-                st.stop()
-            
-            # 데이터 저장
-            st.session_state.data["merged"] = df_merged
-            
-            # 데이터 정보 표시
-            st.success(f"데이터 업로드 성공！")
-            st.metric("데이터 양", f"{len(df_merged):,} 행 × {len(df_merged.columns)} 열")
-            st.markdown("### 데이터 미리보기")
-            st.dataframe(df_merged.head(5), use_container_width=True)
-            
-            # 데이터 기본 정보 추가 표시
-            st.markdown("### 데이터 기본 정보")
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.write("**열 이름**")
-                st.write(", ".join(df_merged.columns.tolist()[:10]) + ("..." if len(df_merged.columns) > 10 else ""))
-            with col2:
-                st.write("**결측값 총 개수**")
-                st.write(f"{df_merged.isnull().sum().sum()} 개")
-            with col3:
-                st.write("**데이터 유형**")
-                st.write(df_merged.dtypes.value_counts().to_string())
-            
-            # 下一步 안내
-            st.divider()
-            st.info("📊 데이터 탐색을 위해 왼쪽 사이드바에서「데이터 시각화」단계로 이동하세요")
+    # Tab 1：기존 자료 업로드 기능
+    with tab1:
+        st.markdown("지원 형식：CSV、Parquet、Excel（.xlsx/.xls）")
+        st.markdown("⚠️  파일에 타겟 열（예측할 변수）과 특징 열（예측에 사용할 변수）이 모두 포함되어야 합니다")
         
-        except Exception as e:
-            st.error(f"데이터 읽기 실패：{str(e)}")
+        uploaded_file = st.file_uploader("데이터 파일 선택", type=["csv", "parquet", "xlsx", "xls"], key="single_file")
+        
+        if uploaded_file is not None:
+            try:
+                # 다양한 형식 파일 읽기
+                if uploaded_file.name.endswith(".csv"):
+                    df_merged = pd.read_csv(uploaded_file)
+                elif uploaded_file.name.endswith(".parquet"):
+                    df_merged = pd.read_parquet(uploaded_file)
+                elif uploaded_file.name.endswith((".xlsx", ".xls")):
+                    df_merged = pd.read_excel(uploaded_file)
+                else:
+                    st.error("지원하지 않는 파일 형식입니다！CSV/Parquet/Excel 파일을 업로드하세요")
+                    st.stop()
+                
+                # 데이터 저장（标记为非示例数据）
+                st.session_state.data["merged"] = df_merged
+                st.session_state.data["is_sample"] = False
+                
+                # 데이터 정보 표시
+                st.success(f"데이터 업로드 성공！")
+                st.metric("데이터 양", f"{len(df_merged):,} 행 × {len(df_merged.columns)} 열")
+                st.markdown("### 데이터 미리보기")
+                st.dataframe(df_merged.head(5), use_container_width=True)
+                
+                # 데이터 기본 정보 추가 표시
+                st.markdown("### 데이터 기본 정보")
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.write("**열 이름**")
+                    st.write(", ".join(df_merged.columns.tolist()[:10]) + ("..." if len(df_merged.columns) > 10 else ""))
+                with col2:
+                    st.write("**결측값 총 개수**")
+                    st.write(f"{df_merged.isnull().sum().sum()} 개")
+                with col3:
+                    st.write("**데이터 유형**")
+                    st.write(df_merged.dtypes.value_counts().to_string())
+                
+                # 下一步 안내
+                st.divider()
+                st.info("📊 데이터 탐색을 위해 왼쪽 사이드바에서「데이터 시각화」단계로 이동하세요")
+            
+            except Exception as e:
+                st.error(f"데이터 읽기 실패：{str(e)}")
+    
+    # Tab 2：예제 데이터 사용（新增核心功能）
+    with tab2:
+        st.markdown("### 📋 예제 데이터 선택")
+        st.markdown("아래 예제 데이터를 선택하여 프레임워크 기능을 바로体验하세요！")
+        
+        # 작업 유형에 맞는 예제 데이터 제공
+        sample_data_option = st.radio(
+            "예제 데이터 종류",
+            options=[
+                "분류 예제：와인 품질 분류（logit 작업용）",
+                "회귀 예제：보스턴 주택 가격（의사결정나무 작업용）"
+            ],
+            index=0
+        )
+        
+        # 예제 데이터 설명
+        if sample_data_option == "분류 예제：와인 품질 분류（logit 작업용）":
+            st.markdown("""
+            **데이터 설명**：
+            - 데이터 소스：sklearn 내장 와인 데이터셋（Wine Dataset）
+            - 데이터 크기：178 행 × 14 열（13개 특징 + 1개 타겟）
+            - 특징 변수：알코올 함량、산도、당분 등 와인 속성
+            - 타겟 변수：와인 품질（1=좋은 와인，0=일반 와인）- 이진 분류
+            """)
+            # 자동으로 작업 유형을 logit으로 설정
+            if st.session_state.task != "logit":
+                st.session_state.task = "logit"
+                st.info("✅ 작업 유형이 자동으로「logit（분류）」로 설정되었습니다")
+        
+        else:
+            st.markdown("""
+            **데이터 설명**：
+            - 데이터 소스：sklearn 내장 보스턴 주택 가격 데이터셋（Boston Housing）
+            - 데이터 크기：506 행 × 14 열（13개 특징 + 1개 타겟）
+            - 특징 변수：범죄율、학군 비율、방 개수等 지역 속성
+            - 타겟 변수：주택 가격 중앙값（단위：1,000 달러）- 연속값 회귀
+            """)
+            # 자동으로 작업 유형을 의사결정나무（회귀）로 설정
+            if st.session_state.task != "의사결정나무":
+                st.session_state.task = "의사결정나무"
+                st.info("✅ 작업 유형이 자동으로「의사결정나무（회귀）」로 설정되었습니다")
+        
+        # 예제 데이터 로드 버튼
+        if st.button("📥 예제 데이터 로드", type="primary"):
+            try:
+                if sample_data_option == "분류 예제：와인 품질 분류（logit 작업용）":
+                    # 와인 데이터 로드 + 전처리（이진 분류로 변환）
+                    wine = load_wine()
+                    df_merged = pd.DataFrame(data=wine.data, columns=wine.feature_names)
+                    # 타겟을 이진 분류로 변환（0,1 클래스만 남김）
+                    df_merged["wine_quality"] = wine.target
+                    df_merged = df_merged[df_merged["wine_quality"] < 2]  # 0,1 클래스만 선택
+                    df_merged["wine_quality"] = df_merged["wine_quality"].map({0: 0, 1: 1})  # 라벨 단순화
+                    # 컬럼명 한글화（사용자 편의）
+                    df_merged.columns = [
+                        "알코올 함량", "말산", "회분", "회분 알칼리도", "마그네슘", "총 폴리페놀",
+                        "플라보노이드 폴리페놀", "비플라보노이드 폴리페놀", "프로안토시아닌", "색상 강도",
+                        "색상", "희석율", "프롤린", "와인 품질（타겟）"
+                    ]
+                
+                else:
+                    # 보스턴 주택 가격 데이터 로드
+                    boston = load_boston()
+                    df_merged = pd.DataFrame(data=boston.data, columns=boston.feature_names)
+                    df_merged["house_price"] = boston.target  # 타겟 열 추가
+                    # 컬럼명 한글화（사용자 편의）
+                    df_merged.columns = [
+                        "범죄율", "25,000평방피트 이상 주거지역 비율", "비소매 상업지역 비율", "강변 위치",
+                        "일산화질소 농도", "거주자 평균 방 개수", "1940년 이전 건축된 주택 비율",
+                        "고용센터까지 거리", "고속도로 접근성", "재산세율", "학생-교사 비율",
+                        "인구 중 흑인 비율", "하위 계층 비율", "주택 가격 중앙값（타겟）"
+                    ]
+                
+                # 데이터 저장（标记为示例数据）
+                st.session_state.data["merged"] = df_merged
+                st.session_state.data["is_sample"] = True
+                
+                st.success("🎉 예제 데이터 로드 성공！")
+                st.metric("데이터 양", f"{len(df_merged):,} 행 × {len(df_merged.columns)} 열")
+                st.markdown("### 데이터 미리보기")
+                st.dataframe(df_merged.head(5), use_container_width=True)
+                
+                # 下一步 안내
+                st.divider()
+                st.info("📊 데이터 탐색을 위해 왼쪽 사이드바에서「데이터 시각화」단계로 이동하세요")
+            
+            except Exception as e:
+                st.error(f"예제 데이터 로드 실패：{str(e)}")
 
 # ----------------------
-# 단계 2：데이터 시각화（新增！히스토그램 기능 추가）
+#  단계 2：데이터 시각화（保持原有功能，兼容示例数据）
 # ----------------------
 elif st.session_state.step == 2:
     st.subheader("📊 데이터 시각화")
     
     if st.session_state.data["merged"] is None:
-        st.warning("먼저「데이터 업로드」단계를 완료하세요")
+        st.warning("먼저「데이터 업로드」단계에서 자신의 데이터를 업로드하거나 예제 데이터를 로드하세요")
     else:
         df = st.session_state.data["merged"]
         
         # 1. 변수 유형 자동识别
         st.markdown("### 변수 선택")
-        # 범주형 변수（object, category）
         cat_cols = df.select_dtypes(include=["object", "category"]).columns.tolist()
-        # 수치형 변수（int64, float64）
         num_cols = df.select_dtypes(include=["int64", "float64"]).columns.tolist()
         
-        #  변수 선택 박스（선택 가능하도록）
+        #  변수 선택 박스（X축 선택 사항으로 변경）
         col1, col2, col3 = st.columns(3)
         with col1:
             x_var = st.selectbox("📋 X축：범주형 변수（선택 사항）", options=["선택 안 함"] + cat_cols, index=0)
-            # X축이 "선택 안 함"인 경우 None 처리
             x_var = None if x_var == "선택 안 함" else x_var
         with col2:
             y_var = st.selectbox("📈 Y축：수치형 변수（필수）", options=num_cols, index=0 if num_cols else None, disabled=not num_cols)
         with col3:
-            # 그래프 타입 선택（新增 히스토그램选项）
             graph_types = [
                 "막대 그래프（평균값）", 
                 "박스 플롯（분포）", 
                 "바이올린 플롯（분포+밀도）",
                 "산점도（개별 데이터）",
                 "선 그래프（추세）",
-                "히스토그램（분포）"  # 新增：히스토그램
+                "히스토그램（분포）"
             ]
             graph_type = st.selectbox("📊 그래프 유형", options=graph_types, index=0)
         
-        # 2. 그래프 그리기（新增 히스토그램绘制逻辑）
+        # 2. 그래프 그리기
         st.divider()
-        if y_var:  # Y축（수치형 변수）만 있어도 히스토그램 가능
+        if y_var:
             if graph_type == "히스토그램（분포）":
                 st.markdown(f"### {y_var} 분포（히스토그램）")
-                
-                # 그래프 데이터 준비（결측값 제거）
                 plot_df = df[[y_var] + ([x_var] if x_var else [])].dropna()
                 
                 try:
-                    # 히스토그램 옵션（구간 개수 조정）
                     bins = st.slider("히스토그램 구간 개수", min_value=10, max_value=100, value=30, step=5)
                     
-                    # X축（범주형 변수） 선택 여부에 따라 그래프 분기
                     if x_var:  # 按类别分组的 히스토그램
                         fig = px.histogram(
                             plot_df, 
                             x=y_var,
-                            color=x_var,  # 按类别区分颜色
-                            barmode="overlay",  # 重叠显示
+                            color=x_var,
+                            barmode="overlay",
                             opacity=0.7,
                             nbins=bins,
                             title=f"{x_var}별 {y_var} 분포",
@@ -220,36 +312,24 @@ elif st.session_state.step == 2:
                             title=f"{y_var} 전체 분포",
                             labels={y_var: y_var, "count": "빈도수"},
                             color_discrete_sequence=["#636EFA"],
-                            marginal="box"  # 边缘添加 박스 플롯（분포 정보 강화）
+                            marginal="box"
                         )
                     
-                    # 그래프 스타일 최적화
-                    fig.update_layout(
-                        width=1200, height=600,
-                        xaxis_title_font=dict(size=14),
-                        yaxis_title_font=dict(size=14),
-                        title_font=dict(size=16, weight="bold")
-                    )
-                    
+                    fig.update_layout(width=1200, height=600, xaxis_title_font=dict(size=14), yaxis_title_font=dict(size=14), title_font=dict(size=16, weight="bold"))
                     st.plotly_chart(fig, use_container_width=True)
                     
-                    # 히스토그램 통계 정보
+                    # 통계 정보
                     st.markdown("### 📋 분포 통계 정보")
                     stats = plot_df[y_var].describe().round(3)
                     stats_df = pd.DataFrame({
                         "통계량": ["개수", "평균값", "표준편차", "최소값", "제1사분위수", "중앙값", "제3사분위수", "최대값"],
-                        "값": [
-                            stats["count"], stats["mean"], stats["std"],
-                            stats["min"], stats["25%"], stats["50%"],
-                            stats["75%"], stats["max"]
-                        ]
+                        "값": [stats["count"], stats["mean"], stats["std"], stats["min"], stats["25%"], stats["50%"], stats["75%"], stats["max"]]
                     })
                     st.dataframe(stats_df, use_container_width=True)
                 
                 except Exception as e:
                     st.error(f"히스토그램 생성 실패：{str(e)}")
             
-            # 기존 그래프逻辑（保持不变）
             else:
                 if not x_var:
                     st.warning("막대 그래프/박스 플롯/바이올린 플롯/산점도/선 그래프는 X축（범주형 변수）를 선택해야 합니다")
@@ -304,16 +384,10 @@ elif st.session_state.step == 2:
                             markers=True
                         )
                     
-                    fig.update_layout(
-                        width=1200, height=600,
-                        xaxis_title_font=dict(size=14),
-                        yaxis_title_font=dict(size=14),
-                        title_font=dict(size=16, weight="bold")
-                    )
-                    
+                    fig.update_layout(width=1200, height=600, xaxis_title_font=dict(size=14), yaxis_title_font=dict(size=14), title_font=dict(size=16, weight="bold"))
                     st.plotly_chart(fig, use_container_width=True)
                     
-                    # 기존 통계 정보
+                    # 통계 정보
                     st.markdown("### 📋 통계 정보")
                     stats_df = plot_df.groupby(x_var)[y_var].agg([
                         "count", "mean", "std", "min", "25%", "50%", "75%", "max"
@@ -331,17 +405,17 @@ elif st.session_state.step == 2:
         st.info("🔧 데이터 전처리를 위해 왼쪽 사이드바에서「데이터 전처리」단계로 이동하세요")
 
 # ----------------------
-# 단계 3：데이터 전처리（修复 selectbox 错误 + continue 语法错误）
+#  단계 3：데이터 전처리（兼容示例数据，保持原有逻辑）
 # ----------------------
 elif st.session_state.step == 3:
     st.subheader("🧹 데이터 전처리")
     
     if st.session_state.data["merged"] is None:
-        st.warning("먼저「데이터 업로드」단계를 완료하세요")
+        st.warning("먼저「데이터 업로드」단계에서 데이터를 업로드하거나 예제 데이터를 로드하세요")
     else:
         df_merged = st.session_state.data["merged"]
         
-        # 1. 데이터 개요（결측값、데이터 유형）
+        # 1. 데이터 개요
         col1, col2 = st.columns(2)
         with col1:
             st.markdown("### 데이터 기본 정보")
@@ -360,30 +434,37 @@ elif st.session_state.step == 3:
             else:
                 st.success("결측값이 없습니다！")
         
-        # 2. 전처리 설정（修复 selectbox 错误）
+        # 2. 전처리 설정
         st.divider()
         st.markdown("### 전처리 매개변수 설정")
         
-        # 타겟 열 선택（예측 변수）- 核心修复：index=0（默认第一个列），增加有效性校验
-        if len(df_merged.columns) > 0:
-            target_col = st.selectbox(
-                "타겟 열 선택（예측할 변수）", 
-                options=df_merged.columns, 
-                index=0  # 修复：默认选择第一个列，而非 -1
-            )
-            st.session_state.preprocess["target_col"] = target_col
-        else:
-            st.error("데이터에 열이 존재하지 않습니다！올바른 데이터 파일을 업로드하세요")
-            st.stop()
+        # 타겟 열 선택（예제 데이터인 경우 기본값 자동 설정）
+        st.markdown("#### 타겟 열 선택（예측할 변수）")
+        target_options = df_merged.columns.tolist()
+        # 예제 데이터인 경우 타겟 열 자동 선택
+        default_target_idx = 0
+        if st.session_state.data["is_sample"]:
+            if st.session_state.task == "logit":
+                # 와인 데이터 타겟 열："와인 품질（타겟）"
+                default_target_idx = target_options.index("와인 품질（타겟）") if "와인 품질（타겟）" in target_options else 0
+            else:
+                # 보스턴 데이터 타겟 열："주택 가격 중앙값（타겟）"
+                default_target_idx = target_options.index("주택 가격 중앙값（타겟）") if "주택 가격 중앙값（타겟）" in target_options else 0
         
-        # 특징 열 선택（타겟 열과 무관한 열 제외）
+        target_col = st.selectbox(
+            "타겟 열 선택", 
+            options=target_options, 
+            index=default_target_idx
+        )
+        st.session_state.preprocess["target_col"] = target_col
+        
+        # 특징 열 선택
         exclude_cols = st.multiselect(
             "제외할 열 선택（예：ID、무관한 필드）", 
             options=[col for col in df_merged.columns if col != target_col]
         )
         feature_cols = [col for col in df_merged.columns if col not in exclude_cols + [target_col]]
         
-        # 特征列有效性校验
         if not feature_cols:
             st.warning("특징 열이 선택되지 않았습니다！제외할 열을 조정하세요")
         st.session_state.preprocess["feature_cols"] = feature_cols
@@ -397,11 +478,11 @@ elif st.session_state.step == 3:
         st.markdown("#### 범주형 특징 인코딩")
         cat_encoding = st.selectbox("범주형 특징 인코딩 방식", options=["레이블 인코딩（LabelEncoder）", "원-핫 인코딩（OneHotEncoder）"], index=0)
         
-        # 3. 전처리 실행（修复 continue 语法错误：替换为 st.stop()）
-        if st.button("전처리 시작"):
+        # 3. 전처리 실행
+        if st.button("전처리 시작", type="primary"):
             if not feature_cols:
                 st.error("전처리 실패：특징 열이 없습니다！")
-                st.stop()  # 修复：用 st.stop() 替代 continue，停止后续代码执行
+                st.stop()
             
             try:
                 X = df_merged[feature_cols].copy()
@@ -411,27 +492,26 @@ elif st.session_state.step == 3:
                 num_cols = X.select_dtypes(include=["int64", "float64"]).columns
                 cat_cols = X.select_dtypes(include=["object", "category"]).columns
                 
-                # 수치형 전처리：결측값 채우기 + 표준화
+                # 수치형 전처리
                 imputer = SimpleImputer(strategy=impute_strategy_map[impute_strategy])
                 X[num_cols] = imputer.fit_transform(X[num_cols])
                 
                 scaler = StandardScaler()
                 X[num_cols] = scaler.fit_transform(X[num_cols])
                 
-                # 범주형 전처리：결측값 채우기 + 인코딩
+                # 범주형 전처리
                 encoders = {}
                 for col in cat_cols:
-                    # 범주형 결측값을 "알 수 없음"으로 채우기
                     X[col] = X[col].fillna("알 수 없음").astype(str)
                     
                     if cat_encoding == "레이블 인코딩（LabelEncoder）":
                         le = LabelEncoder()
                         X[col] = le.fit_transform(X[col])
                         encoders[col] = le
-                    else:  # 원-핫 인코딩
+                    else:
                         ohe = OneHotEncoder(sparse_output=False, drop="first")
                         ohe_result = ohe.fit_transform(X[[col]])
-                        ohe_cols = [f"{col}_{cat}" for cat in ohe.categories_[0][1:]]  # 첫 번째 범주 제외（다중공선성 방지）
+                        ohe_cols = [f"{col}_{cat}" for cat in ohe.categories_[0][1:]]
                         X = pd.concat([X.drop(col, axis=1), pd.DataFrame(ohe_result, columns=ohe_cols)], axis=1)
                         encoders[col] = (ohe, ohe_cols)
                 
@@ -439,7 +519,7 @@ elif st.session_state.step == 3:
                 st.session_state.preprocess["imputer"] = imputer
                 st.session_state.preprocess["scaler"] = scaler
                 st.session_state.preprocess["encoders"] = encoders
-                st.session_state.preprocess["feature_cols"] = list(X.columns)  # 업데이트된 특징 열（원-핫 인코딩 열 포함）
+                st.session_state.preprocess["feature_cols"] = list(X.columns)
                 
                 # 전처리된 데이터 저장
                 st.session_state.data["X_processed"] = X
@@ -452,98 +532,65 @@ elif st.session_state.step == 3:
                 st.error(f"전처리 실패：{str(e)}")
 
 # ----------------------
-# 단계 4：모델 학습（修复 stratify 参数错误）
+#  단계 4：모델 학습（兼容示例数据）
 # ----------------------
 elif st.session_state.step == 4:
     st.subheader("🚀 하이브리드모형 학습（회귀 분석 + 의사결정나무）")
     
-    # 전처리 완료 여부 확인
     if "X_processed" not in st.session_state.data or "y_processed" not in st.session_state.data:
         st.warning("먼저「데이터 전처리」단계를 완료하세요")
     else:
         X = st.session_state.data["X_processed"]
         y = st.session_state.data["y_processed"]
         
-        # ----------------------
-        # 核心修复：stratify 参数有效性校验
-        # ----------------------
+        # 데이터 분할
         st.markdown("### 학습 설정")
         test_size = st.slider("테스트集 비율", min_value=0.1, max_value=0.3, value=0.2, step=0.05)
-        
-        # stratify 사용 여부 결정（分类任务且目标变量类别数≥2时才使用）
-        stratify_param = None
-        if st.session_state.task == "logit":  # 分类任务
-            y_unique_count = y.nunique()  # 目标变量唯一值数量
-            if y_unique_count >= 2:
-                # 进一步检查每个类别的样本数是否≥1
-                y_value_counts = y.value_counts()
-                if (y_value_counts >= 1).all():
-                    stratify_param = y
-                    st.info(f"✅分层抽样 적용：目标变量에 {y_unique_count} 个类别 존재（样本数：{y_value_counts.to_dict()}）")
-                else:
-                    st.warning(f"⚠️ 일부类别样本数为0，分层抽样禁用（自动转为普通随机抽样）")
-            else:
-                st.warning(f"⚠️ 目标变量只有 {y_unique_count} 个类别，分层抽样禁用（自动转为普通随机抽样）")
-        else:
-            st.info("ℹ️ 回归任务不支持分层抽样，使用普通随机抽样")
-        
-        # 数据 분할（修复后：根据校验结果决定是否使用 stratify）
         X_train, X_test, y_train, y_test = train_test_split(
             X, y, test_size=test_size, random_state=42, 
-            stratify=stratify_param  # 校验后的参数
+            stratify=y if st.session_state.task == "logit" else None
         )
         
-        # 모델 선택（작업 유형에 따라）
-        if st.session_state.task == "logit":  # 分类任务：로지스틱 회귀（회귀분석）+ 분류 의사결정나무
-            reg_model = LogisticRegression(max_iter=1000)  # 分类用 회귀분석（로지스틱）
-            dt_model = DecisionTreeClassifier(random_state=42, max_depth=10)  # 分类 의사결정나무
-        else:  # 回归任务：선형 회귀（회귀분석）+ 회귀 의사결정나무
-            reg_model = LinearRegression()  # 回归用 회귀분석（선형）
-            dt_model = DecisionTreeRegressor(random_state=42, max_depth=10)  # 回归 의사결정나무
+        # 모델 선택
+        if st.session_state.task == "logit":
+            reg_model = LogisticRegression(max_iter=1000)
+            dt_model = DecisionTreeClassifier(random_state=42, max_depth=10)
+        else:
+            reg_model = LinearRegression()
+            dt_model = DecisionTreeRegressor(random_state=42, max_depth=10)
         
         # 모델 학습
-        if st.button("모델 학습 시작"):
+        if st.button("모델 학습 시작", type="primary"):
             with st.spinner("모델 학습 중..."):
-                try:
-                    # 단일 모델 학습
-                    reg_model.fit(X_train, y_train)
-                    dt_model.fit(X_train, y_train)
-                    
-                    # 모델 저장
-                    st.session_state.models["regression"] = reg_model
-                    st.session_state.models["decision_tree"] = dt_model
-                    
-                    # 학습集/테스트集 저장
-                    st.session_state.data["X_train"] = X_train
-                    st.session_state.data["X_test"] = X_test
-                    st.session_state.data["y_train"] = y_train
-                    st.session_state.data["y_test"] = y_test
-                    
-                    st.success("모델 학습 완료！")
-                    st.markdown("✅ 학습된 모델：")
-                    st.markdown("- 회귀 분석（로지스틱/선형，해석력 강함）")
-                    st.markdown("- 의사결정나무（분류/회귀，정확도 높음）")
-                    st.markdown("- 하이브리드모형（전两者 가중融合）")
-                    
-                    # 训练集/测试集 정보 표시
-                    st.markdown(f"📊 학습集：{len(X_train):,} 행 | 테스트集：{len(X_test):,} 행")
-                    if st.session_state.task == "logit":
-                        st.markdown(f"🎯 训练集类别分布：{y_train.value_counts().to_dict()}")
-                        st.markdown(f"🎯 测试集类别分布：{y_test.value_counts().to_dict()}")
-                except Exception as e:
-                    st.error(f"모델 학습 실패：{str(e)}")
+                reg_model.fit(X_train, y_train)
+                dt_model.fit(X_train, y_train)
+                
+                # 모델 저장
+                st.session_state.models["regression"] = reg_model
+                st.session_state.models["decision_tree"] = dt_model
+                
+                # 데이터 저장
+                st.session_state.data["X_train"] = X_train
+                st.session_state.data["X_test"] = X_test
+                st.session_state.data["y_train"] = y_train
+                st.session_state.data["y_test"] = y_test
+                
+                st.success("모델 학습 완료！")
+                st.markdown("✅ 학습된 모델：")
+                st.markdown("- 회귀 분석（로지스틱/선형，해석력 강함）")
+                st.markdown("- 의사결정나무（분류/회귀，정확도 높음）")
+                st.markdown("- 하이브리드모형（전两者 가중融合）")
 
 # ----------------------
-# 단계 5：모델 예측（단일/일괄 업로드）
+#  단계 5：모델 예측（兼容示例数据，新增示例 입력값）
 # ----------------------
 elif st.session_state.step == 5:
     st.subheader("🎯 모델 예측")
     
-    # 모델 학습 완료 여부 확인
     if st.session_state.models["regression"] is None or st.session_state.models["decision_tree"] is None:
         st.warning("먼저「모델 학습」단계를 완료하세요")
     else:
-        # 예측 함수（전처리 로직 재사용 + 新模型适配）
+        # 예측 함수
         def predict(input_data):
             X = input_data.copy()
             preprocess = st.session_state.preprocess
@@ -560,60 +607,69 @@ elif st.session_state.step == 5:
                 encoder = preprocess["encoders"][col]
                 
                 if isinstance(encoder, LabelEncoder):
-                    # 미본적 범주 처리
                     X[col] = X[col].replace([x for x in X[col].unique() if x not in encoder.classes_], "알 수 없음")
                     if "알 수 없음" not in encoder.classes_:
                         encoder.classes_ = np.append(encoder.classes_, "알 수 없음")
                     X[col] = encoder.transform(X[col])
-                else:  # OneHotEncoder
+                else:
                     ohe, ohe_cols = encoder
                     ohe_result = ohe.transform(X[[col]])
                     X = pd.concat([X.drop(col, axis=1), pd.DataFrame(ohe_result, columns=ohe_cols)], axis=1)
             
-            # 특징 열 순서 일치 보장
+            # 특징 열 순서 일치
             X = X[preprocess["feature_cols"]]
             
-            # 하이브리드모형 예측（가중融合）
+            # 하이브리드 예측
             reg_weight = st.session_state.models["mixed_weights"]["regression"]
             dt_weight = st.session_state.models["mixed_weights"]["decision_tree"]
             reg_model = st.session_state.models["regression"]
             dt_model = st.session_state.models["decision_tree"]
             
-            if st.session_state.task == "logit":  # 분류 예측
-                reg_proba = reg_model.predict_proba(X)[:, 1]  # 로지스틱 회귀 확률
-                dt_proba = dt_model.predict_proba(X)[:, 1]    # 의사결정나무 확률
+            if st.session_state.task == "logit":
+                reg_proba = reg_model.predict_proba(X)[:, 1]
+                dt_proba = dt_model.predict_proba(X)[:, 1]
                 mixed_proba = reg_weight * reg_proba + dt_weight * dt_proba
                 pred = (mixed_proba >= 0.5).astype(int)
                 return pred, mixed_proba
-            else:  # 회귀 예측
-                reg_pred = reg_model.predict(X)  # 선형 회귀 예측값
-                dt_pred = dt_model.predict(X)    # 의사결정나무 예측값
+            else:
+                reg_pred = reg_model.predict(X)
+                dt_pred = dt_model.predict(X)
                 mixed_pred = reg_weight * reg_pred + dt_weight * dt_pred
                 return mixed_pred, None
         
         # 예측 방식 선택
         predict_mode = st.radio("예측 방식", options=["단일 데이터 입력", "일괄 업로드 CSV"])
         
-        # 단일 입력 예측
+        # 단일 입력 예측（示例数据인 경우 기본값 제공）
         if predict_mode == "단일 데이터 입력":
             st.markdown("#### 단일 데이터 입력（특징값을 입력하세요）")
             feature_cols = st.session_state.preprocess["feature_cols"]
             input_data = {}
             
-            # 특징 유형에 따라 동적으로 입력 폼 생성
             with st.form("single_pred_form"):
                 cols = st.columns(3)
-                for i, col in enumerate(feature_cols[:9]):  # 최대 9개 특징 표시（화면 혼잡 방지）
+                for i, col in enumerate(feature_cols[:9]):
                     with cols[i % 3]:
-                        # 특징 유형 판단（수치/범주）
-                        if col in st.session_state.data["X_processed"].select_dtypes(include=["int64", "float64"]).columns:
-                            input_data[col] = st.number_input(col, value=0.0)
-                        else:
-                            # 범주형 특징：학습集中의 고유값을 옵션으로 제시
-                            unique_vals = st.session_state.data["X_processed"][col].unique()[:10]  # 최대 10개 옵션
-                            input_data[col] = st.selectbox(col, options=unique_vals)
+                        # 示例数据인 경우 기본값 설정（사용자 편의）
+                        default_value = 0.0
+                        if st.session_state.data["is_sample"]:
+                            # 와인 데이터（분류）기본값
+                            if "알코올 함량" in col:
+                                default_value = 13.0
+                            elif "말산" in col:
+                                default_value = 2.5
+                            elif "회분" in col:
+                                default_value = 2.0
+                            # 보스턴 데이터（회귀）기본값
+                            elif "범죄율" in col:
+                                default_value = 0.5
+                            elif "방 개수" in col:
+                                default_value = 6.0
+                            elif "주택 가격" not in col:  # 타겟 열이 아닌 경우
+                                default_value = st.session_state.data["X_processed"][col].mean()  # 평균값을 기본값으로
+                        
+                        input_data[col] = st.number_input(col, value=float(default_value))
                 
-                # 예측 제출
                 submit_btn = st.form_submit_button("예측 시작")
             
             if submit_btn:
@@ -623,10 +679,10 @@ elif st.session_state.step == 5:
                 st.divider()
                 st.markdown("### 예측 결과")
                 if st.session_state.task == "logit":
-                    st.metric("예측 결과", "양성" if pred[0] == 1 else "음성")
+                    st.metric("예측 결과", "좋은 와인（양성）" if pred[0] == 1 else "일반 와인（음성）")
                     st.metric("양성 확률", f"{proba[0]:.3f}" if proba is not None else "-")
-                else:  # 의사결정나무（회귀）
-                    st.metric("예측 결과", f"{pred[0]:.2f}")
+                else:
+                    st.metric("주택 가격 예측 결과", f"{pred[0]:.2f} thousand 달러")
         
         # 일괄 업로드 예측
         else:
@@ -638,7 +694,6 @@ elif st.session_state.step == 5:
                 st.metric("업로드 데이터 양", f"{len(batch_df):,} 행")
                 st.dataframe(batch_df.head(3), use_container_width=True)
                 
-                # 특징 열 일치 확인
                 required_features = st.session_state.preprocess["feature_cols"]
                 missing_features = [col for col in required_features if col not in batch_df.columns]
                 if missing_features:
@@ -668,7 +723,7 @@ elif st.session_state.step == 5:
                             )
 
 # ----------------------
-# 단계 6：성능 평가（하이브리드모형 vs 단일 모형）
+#  단계 6：성능 평가（兼容示例数据）
 # ----------------------
 elif st.session_state.step == 6:
     st.subheader("📈 모델 성능 평가")
@@ -683,8 +738,8 @@ elif st.session_state.step == 6:
         reg_weight = st.session_state.models["mixed_weights"]["regression"]
         dt_weight = st.session_state.models["mixed_weights"]["decision_tree"]
         
-        # 각 모델 예측 결과 계산
-        if st.session_state.task == "logit":  # 분류任务 평가
+        # 각 모델 예측
+        if st.session_state.task == "logit":
             reg_pred = reg_model.predict(X_test)
             dt_pred = dt_model.predict(X_test)
             reg_proba = reg_model.predict_proba(X_test)[:, 1]
@@ -709,7 +764,7 @@ elif st.session_state.step == 6:
                 "AUC": [reg_metrics["AUC"], dt_metrics["AUC"], mixed_metrics["AUC"]]
             }).round(3)
         
-        else:  # 회귀任务 평가
+        else:
             reg_pred = reg_model.predict(X_test)
             dt_pred = dt_model.predict(X_test)
             mixed_pred = reg_weight * reg_pred + dt_weight * dt_pred
@@ -732,14 +787,13 @@ elif st.session_state.step == 6:
                 "R²": [reg_metrics["R²"], dt_metrics["R²"], mixed_metrics["R²"]]
             }).round(3)
         
-        # 지표 비교 표시
+        # 지표 비교
         st.markdown("### 모델 성능 비교")
         st.dataframe(metrics_df, use_container_width=True)
         
         # 시각화 비교
         col1, col2 = st.columns(2)
         
-        # logit（분류）작업 시각화
         if st.session_state.task == "logit":
             with col1:
                 st.markdown("### ROC-AUC 곡선")
@@ -757,31 +811,30 @@ elif st.session_state.step == 6:
             with col2:
                 st.markdown("### 혼동 행렬（하이브리드모형）")
                 cm = confusion_matrix(y_test, mixed_pred)
-                cm_df = pd.DataFrame(cm, index=["실제 음성", "실제 양성"], columns=["예측 음성", "예측 양성"])
+                cm_df = pd.DataFrame(cm, index=["실제 일반 와인", "실제 좋은 와인"], columns=["예측 일반 와인", "예측 좋은 와인"])
                 fig_cm = px.imshow(cm_df, text_auto=True, color_continuous_scale="Blues")
                 st.plotly_chart(fig_cm, use_container_width=True)
         
-        # 의사결정나무（회귀）작업 시각화
         else:
             with col1:
                 st.markdown("### 예측값 vs 실제값（하이브리드모형）")
-                fig_pred = px.scatter(x=y_test, y=mixed_pred, title="실제값 vs 예측값", labels={"x": "실제값", "y": "예측값"})
+                fig_pred = px.scatter(x=y_test, y=mixed_pred, title="실제 주택 가격 vs 예측 가격", labels={"x": "실제 가격", "y": "예측 가격"})
                 fig_pred.add_trace(go.Scatter(x=[y_test.min(), y_test.max()], y=[y_test.min(), y_test.max()], line_color="red", name="이상적인 피팅 라인"))
                 st.plotly_chart(fig_pred, use_container_width=True)
             
             with col2:
                 st.markdown("### 잔차 그래프（하이브리드모형）")
                 residuals = y_test - mixed_pred
-                fig_res = px.scatter(x=mixed_pred, y=residuals, title="예측값 vs 잔차", labels={"x": "예측값", "y": "잔차"})
+                fig_res = px.scatter(x=mixed_pred, y=residuals, title="예측 가격 vs 잔차", labels={"x": "예측 가격", "y": "잔차"})
                 fig_res.add_trace(go.Scatter(x=[mixed_pred.min(), mixed_pred.max()], y=[0, 0], line_color="red", name="잔차=0 라인"))
                 st.plotly_chart(fig_res, use_container_width=True)
         
-        # 모델 해석（특징 중요도：의사결정나무 기반）
+        # 특징 중요도
         st.divider()
         st.markdown("### 모델 해석：핵심 특징 중요도")
         feature_importance = pd.DataFrame({
             "특징명": st.session_state.preprocess["feature_cols"],
-            "중요도": dt_model.feature_importances_  # 의사결정나무의 특징 중요도
+            "중요도": dt_model.feature_importances_
         }).sort_values("중요도", ascending=False).head(10)
         
         fig_importance = px.bar(feature_importance, x="중요도", y="특징명", orientation="h", color="중요도", color_continuous_scale="viridis")
