@@ -72,7 +72,7 @@ if st.session_state.step >= 4:  # 모델 학습后 가중치 조정
     st.sidebar.text(f"의사결정나무 가중치（정확도 높음）：{1 - reg_weight:.1f}")
 
 # ----------------------
-# 3. 메인 페이지：단계별内容（优化数据上传步骤的流程衔接）
+# 3. 메인 페이지：단계별内容（修复rerun错误，移除timeout参数）
 # ----------------------
 st.title("📊 하이브리드모형 동적 배포 프레임워크")
 st.markdown("**데이터 선택后 바로 시각화부터 진행，예제 데이터或自有 데이터로 전과정을 완성**")
@@ -107,16 +107,15 @@ if st.session_state.step == 0:
         st.rerun()
 
 # ----------------------
-#  단계 1：데이터 업로드（核心优化：选择数据后直接跳转至可视化）
+#  단계 1：데이터 업로드（核心修复：移除timeout参数，仅保留手动跳转）
 # ----------------------
 elif st.session_state.step == 1:
     st.subheader("📤 데이터 선택（자신의 데이터 업로드 또는 예제 데이터 사용）")
-    st.markdown("⚠️  선택 후 자동으로 데이터 시각화 단계로 이동합니다")
     
     #  탭 분할：자신의 데이터 / 예제 데이터（保留原有功能）
     tab1, tab2 = st.tabs(["📁 자신의 데이터 업로드", "📊 예제 데이터 사용"])
     
-    # Tab 1：기존 자료 업로드功能 + 上传后跳转
+    # Tab 1：기존 자료 업로드功能 + 手动跳转
     with tab1:
         st.markdown("지원 형식：CSV、Parquet、Excel（.xlsx/.xls）")
         st.markdown("⚠️  파일에 타겟 열（예측할 변수）과 특징 열（예측에 사용할 변수）이 모두 포함되어야 합니다")
@@ -147,21 +146,19 @@ elif st.session_state.step == 1:
                 st.markdown("### 데이터 미리보기")
                 st.dataframe(df_merged.head(5), use_container_width=True)
                 
-                #  自动跳转按钮（默认3秒后跳转，也可手动点击）
+                #  手动跳转按钮（移除自动跳转，加强提示）
+                st.divider()
                 col1, col2, col3 = st.columns(3)
                 with col2:
-                    st.markdown("⏳ 3초 후 자동으로 데이터 시각화 단계로 이동...")
-                    if st.button("🚀 바로 이동", type="primary"):
+                    st.markdown("📊 데이터 시각화 단계로 이동하세요")
+                    if st.button("🚀 데이터 시각화로 이동", type="primary"):
                         st.session_state.step = 2
                         st.rerun()
-                
-                #  3秒后自动跳转
-                st.rerun(timeout=3)
             
             except Exception as e:
                 st.error(f"데이터 읽기 실패：{str(e)}")
     
-    # Tab 2：예제 데이터 사용 + 加载后跳转
+    # Tab 2：예제 데이터 사용 + 手动跳转（修复核心错误）
     with tab2:
         st.markdown("### 📋 예제 데이터 선택")
         st.markdown("아래 예제 데이터를 선택하여 프레임워크 기능을 바로体验하세요！")
@@ -203,54 +200,61 @@ elif st.session_state.step == 1:
                 st.session_state.task = "의사결정나무"
                 st.info("✅ 작업 유형이 자동으로「의사결정나무（회귀）」로 설정되었습니다")
         
-        #  예제 데이터 로드 + 加载后跳转
+        #  예제 데이터 로드 + 手动跳转（移除timeout参数）
         col1, col2, col3 = st.columns(3)
         with col2:
-            if st.button("📥 예제 데이터 로드", type="primary"):
-                try:
-                    if sample_data_option == "분류 예제：와인 품질 분류（logit 작업용）":
-                        #  와인 데이터 로드 + 전처리（이진 분류로 변환）
-                        wine = load_wine()
-                        df_merged = pd.DataFrame(data=wine.data, columns=wine.feature_names)
-                        df_merged["wine_quality"] = wine.target
-                        df_merged = df_merged[df_merged["wine_quality"] < 2]
-                        df_merged["wine_quality"] = df_merged["wine_quality"].map({0: 0, 1: 1})
-                        #  컬럼명 한글화
-                        df_merged.columns = [
-                            "알코올 함량", "말산", "회분", "회분 알칼리도", "마그네슘", "총 폴리페놀",
-                            "플라보노이드 폴리페놀", "비플라보노이드 폴리페놀", "프로안토시아닌", "색상 강도",
-                            "색상", "희석율", "프롤린", "와인 품질（타겟）"
-                        ]
-                    
-                    else:
-                        #  캘리포니아 주택 가격 데이터 로드
-                        california = fetch_california_housing()
-                        df_merged = pd.DataFrame(data=california.data, columns=california.feature_names)
-                        df_merged["house_price"] = california.target
-                        #  컬럼명 한글화
-                        df_merged.columns = [
-                            "거주자 평균 소득", "주택 연령 중앙값", "총 방 개수", "총 침실 개수",
-                            "인구 수", "가구 수", "위도", "경도", "주택 가격 중앙값（타겟）"
-                        ]
-                        #  데이터 샘플링（1000행）
-                        df_merged = df_merged.sample(n=1000, random_state=42).reset_index(drop=True)
-                    
-                    #  데이터 저장
-                    st.session_state.data["merged"] = df_merged
-                    st.session_state.data["is_sample"] = True
-                    st.session_state.data["discretized_cols"] = None
-                    
-                    st.success("🎉 예제 데이터 로드 성공！")
-                    st.metric("데이터 양", f"{len(df_merged):,} 행 × {len(df_merged.columns)} 열")
-                    st.markdown("### 데이터 미리보기")
-                    st.dataframe(df_merged.head(5), use_container_width=True)
-                    
-                    #  自动跳转提示
-                    st.markdown("⏳ 3초 후 자동으로 데이터 시각화 단계로 이동...")
-                    st.rerun(timeout=3)  # 3秒后跳转
-                    
-                except Exception as e:
-                    st.error(f"예제 데이터 로드 실패：{str(e)}")
+            load_btn = st.button("📥 예제 데이터 로드", type="primary")
+        
+        if load_btn:
+            try:
+                if sample_data_option == "분류 예제：와인 품질 분류（logit 작업용）":
+                    #  와인 데이터 로드 + 전처리（이진 분류로 변환）
+                    wine = load_wine()
+                    df_merged = pd.DataFrame(data=wine.data, columns=wine.feature_names)
+                    df_merged["wine_quality"] = wine.target
+                    df_merged = df_merged[df_merged["wine_quality"] < 2]
+                    df_merged["wine_quality"] = df_merged["wine_quality"].map({0: 0, 1: 1})
+                    #  컬럼명 한글화
+                    df_merged.columns = [
+                        "알코올 함량", "말산", "회분", "회분 알칼리도", "마그네슘", "총 폴리페놀",
+                        "플라보노이드 폴리페놀", "비플라보노이드 폴리페놀", "프로안토시아닌", "색상 강도",
+                        "색상", "희석율", "프롤린", "와인 품질（타겟）"
+                    ]
+                
+                else:
+                    #  캘리포니아 주택 가격 데이터 로드
+                    california = fetch_california_housing()
+                    df_merged = pd.DataFrame(data=california.data, columns=california.feature_names)
+                    df_merged["house_price"] = california.target
+                    #  컬럼명 한글화
+                    df_merged.columns = [
+                        "거주자 평균 소득", "주택 연령 중앙값", "총 방 개수", "총 침실 개수",
+                        "인구 수", "가구 수", "위도", "경도", "주택 가격 중앙값（타겟）"
+                    ]
+                    #  데이터 샘플링（1000행）
+                    df_merged = df_merged.sample(n=1000, random_state=42).reset_index(drop=True)
+                
+                #  데이터 저장
+                st.session_state.data["merged"] = df_merged
+                st.session_state.data["is_sample"] = True
+                st.session_state.data["discretized_cols"] = None
+                
+                st.success("🎉 예제 데이터 로드 성공！")
+                st.metric("데이터 양", f"{len(df_merged):,} 행 × {len(df_merged.columns)} 열")
+                st.markdown("### 데이터 미리보기")
+                st.dataframe(df_merged.head(5), use_container_width=True)
+                
+                #  手动跳转按钮（核心修复：移除timeout=3参数）
+                st.divider()
+                col1, col2, col3 = st.columns(3)
+                with col2:
+                    st.markdown("📊 데이터 시각화 단계로 이동하세요")
+                    if st.button("🚀 데이터 시각화로 이동", type="primary"):
+                        st.session_state.step = 2
+                        st.rerun()
+                
+            except Exception as e:
+                st.error(f"예제 데이터 로드 실패：{str(e)}")
 
 # ----------------------
 #  단계 2：데이터 시각화（保留原有优化：数值型变量离散化）
