@@ -1,4 +1,4 @@
-import streamlit as st
+dimport streamlit as st
 import pandas as pd
 import numpy as np
 import os
@@ -345,7 +345,7 @@ elif st.session_state.step == 2:
         st.info("🔧 데이터 전처리를 위해 왼쪽 사이드바에서「데이터 전처리」단계로 이동하세요")
 
 # ----------------------
-# 3. 데이터 전처리（Step 3） - 오류 수정 (안전한 변수 선택 로직)
+# 3. 데이터 전처리（Step 3） - 컬럼명 중복/MultiIndex 오류 해결 버전
 # ----------------------
 elif st.session_state.step == 3:
     st.subheader("🛠 데이터 전처리 및 변수 선택 (Smart Stepwise)")
@@ -355,6 +355,29 @@ elif st.session_state.step == 3:
     if df_raw is None:
         st.error("데이터가 없습니다. Step 1에서 데이터를 업로드하세요.")
         st.stop()
+
+    # [오류 해결 핵심] 컬럼명 정리 (중복 제거 및 MultiIndex 병합)
+    # 1) MultiIndex(여러 줄 헤더)일 경우 하나로 합치기
+    if isinstance(df_raw.columns, pd.MultiIndex):
+        st.warning("⚠️ 다중 헤더(MultiIndex)가 감지되어 단일 헤더로 병합합니다.")
+        df_raw.columns = ['_'.join(map(str, col)).strip() for col in df_raw.columns.values]
+    
+    # 2) 컬럼명 중복 제거 (예: A, A -> A, A_1)
+    if df_raw.columns.has_duplicates:
+        st.warning("⚠️ 중복된 컬럼명이 감지되어 이름을 변경합니다 (예: Col -> Col_1).")
+        new_columns = []
+        seen = {}
+        for col in df_raw.columns:
+            col_str = str(col)
+            if col_str in seen:
+                seen[col_str] += 1
+                new_columns.append(f"{col_str}_{seen[col_str]}")
+            else:
+                seen[col_str] = 0
+                new_columns.append(col_str)
+        df_raw.columns = new_columns
+        # 정리된 데이터 세션에 다시 저장
+        st.session_state.data["merged"] = df_raw
 
     # -------------------------------------------------------
     # [1] 타겟 변수 우선 선택 (스마트 필터링 적용)
@@ -376,6 +399,7 @@ elif st.session_state.step == 3:
             continue
         target_candidates.append(col)
     
+    # 만약 필터링 결과 남은게 없으면 원본 전체 사용
     if not target_candidates:
         target_candidates = df_raw.columns.tolist()
 
@@ -407,11 +431,9 @@ elif st.session_state.step == 3:
     st.divider()
 
     # -------------------------------------------------------
-    # [2] 스마트 변수 선택 (Stepwise) - [오류 수정된 부분]
+    # [2] 스마트 변수 선택 (Stepwise)
     # -------------------------------------------------------
     st.markdown("### 2️⃣ 변수 선택 (Stepwise)")
-    
-    all_cols = df_raw.columns.tolist()
     
     # 선택된 변수 리스트 초기화
     if "selected_features_temp" not in st.session_state:
@@ -424,25 +446,24 @@ elif st.session_state.step == 3:
         if st.button("🤖 AI 스마트 변수 선택\n(Stepwise 실행)", type="primary", use_container_width=True):
             with st.spinner("데이터 분석 중..."):
                 try:
-                    # [수정 핵심] 분석용 데이터는 안전하게 복사 후 단순 처리
+                    # 분석용 임시 데이터 복사
                     temp_df = df_raw.copy()
                     
-                    # 1. 수치형 처리: NaN을 0으로 채움 (오류 방지)
+                    # 1. 수치형 처리: NaN을 0으로 채움
                     num_temp = temp_df.select_dtypes(include=[np.number]).columns
-                    temp_df[num_temp] = temp_df[num_temp].fillna(0)
+                    if len(num_temp) > 0:
+                        temp_df[num_temp] = temp_df[num_temp].fillna(0)
                     
                     # 2. 범주형 처리: NaN을 "unknown"으로 채우고 숫자 변환
                     cat_temp = temp_df.select_dtypes(exclude=[np.number]).columns
                     for c in cat_temp:
-                        temp_df[c] = temp_df[c].fillna("unknown")
-                        # pd.factorize는 안전하게 1차원 배열 반환
+                        # 컬럼명 안전하게 처리 (문자열 변환)
+                        temp_df[c] = temp_df[c].fillna("unknown").astype(str)
                         temp_df[c] = pd.factorize(temp_df[c])[0]
                     
                     # 3. X, y 분리
-                    # 타겟 제외
                     X_temp = temp_df.drop(columns=[target_col], errors='ignore')
-                    
-                    # ID 컬럼 등(target_candidates에 없는 것)도 X에서 제외
+                    # X에서도 유효한 컬럼만 남김
                     valid_features = [c for c in X_temp.columns if c in target_candidates]
                     X_temp = X_temp[valid_features]
 
@@ -452,20 +473,18 @@ elif st.session_state.step == 3:
                     from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
                     from sklearn.feature_selection import SelectFromModel
 
-                    # 타겟 데이터 타입 확인
                     is_classification = False
                     if st.session_state.task == "logit":
                         is_classification = True
+                    # 타겟 값의 종류가 적거나 문자열이면 분류로 간주
                     elif y_temp.dtype == 'object' or len(y_temp.unique()) < 20:
                         is_classification = True
                     
                     if is_classification:
-                        # 분류 모델
                         model_sel = RandomForestClassifier(n_estimators=50, random_state=42, n_jobs=-1)
                         if y_temp.dtype == 'object': 
-                            y_temp = pd.factorize(y_temp)[0]
+                             y_temp = pd.factorize(y_temp)[0]
                     else:
-                        # 회귀 모델
                         model_sel = RandomForestRegressor(n_estimators=50, random_state=42, n_jobs=-1)
 
                     model_sel.fit(X_temp, y_temp)
@@ -481,7 +500,7 @@ elif st.session_state.step == 3:
 
                 except Exception as e:
                     st.error(f"분석 오류 발생: {str(e)}")
-                    st.write("상세 정보: 데이터에 비정상적인 값이 포함되어 있을 수 있습니다.")
+                    st.write("힌트: 데이터의 컬럼명이 중복되었거나 비정상적인 값이 있을 수 있습니다.")
 
     with col_tool2:
         # 멀티 셀렉트 박스
@@ -553,7 +572,8 @@ elif st.session_state.step == 3:
                 else:
                     ohe = OneHotEncoder(sparse_output=False, drop="first", handle_unknown='ignore')
                     ohe_data = ohe.fit_transform(X[[col]])
-                    new_cols = [f"{col}_{c}" for c in ohe.categories_[0][1:]]
+                    # 컬럼명 생성 시 특수문자 제거 등 안전장치
+                    new_cols = [f"{col}_{str(c).replace(' ', '_')}" for c in ohe.categories_[0][1:]]
                     X_ohe = pd.DataFrame(ohe_data, columns=new_cols, index=X.index)
                     X = pd.concat([X.drop(columns=[col]), X_ohe], axis=1)
                     encoders[col] = (ohe, new_cols)
