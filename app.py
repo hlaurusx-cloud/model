@@ -395,128 +395,131 @@ elif st.session_state.step == 3:
         st.error("최소 하나의 변수를 선택해야 합니다.")
         st.stop()
 
-    # 선택된 변수만으로 데이터프레임 갱신
+    # 선택된 변수만으로 데이터프레임 갱신 (이 변수를 아래 로직에서 사용해야 함)
     df = df_raw[selected_columns]
     
     st.success(f"선택된 변수 개수: {len(selected_columns)}개 / 전체 데이터 크기: {df.shape}")
     st.divider()
 
-    # --- [기존 로직] 2. 결측치 처리 및 인코딩 (여기부터는 기존 코드와 연결) ---
+    # --- [기존 로직] 2. 결측치 처리 및 인코딩 ---
     st.markdown("### 2️⃣ 결측치 처리 및 데이터 변환")
     
-    # ... (이 아래로 기존의 결측치 처리, 인코딩 코드가 이어지면 됩니다)
-    # 주의: 아래 로직부터는 'df_raw'가 아니라 위에서 필터링된 'df'를 사용해야 합니다.
-    
-    # (예시: 기존 코드의 흐름 유지)
     col1, col2 = st.columns(2)
-    # ...
-        with col1:
-            st.markdown("### 데이터 기본 정보")
-            st.write(f"총 데이터 양：{len(df_merged):,} 행 × {len(df_merged.columns)} 열")
-            st.write("데이터 유형 분포：")
-            st.dataframe(df_merged.dtypes.value_counts().reset_index(), use_container_width=True)
-        
-        with col2:
-            st.markdown("### 결측값 분포")
-            missing_info = df_merged.isnull().sum()[df_merged.isnull().sum() > 0].reset_index()
-            missing_info.columns = ["필드명", "결측값 개수"]
-            if len(missing_info) > 0:
-                st.dataframe(missing_info, use_container_width=True)
-                fig_missing = px.imshow(df_merged.isnull(), color_continuous_scale="Reds", title="결측값 히트맵")
-                st.plotly_chart(fig_missing, use_container_width=True)
-            else:
-                st.success("결측값이 없습니다！")
-        
-        # 2. 전처리 설정（修复 selectbox 错误）
-        st.divider()
-        st.markdown("### 전처리 매개변수 설정")
-        
-        # 타겟 열 선택（예측 변수）- 核心修复：index=0（默认第一个列），增加有效性校验
-        if len(df_merged.columns) > 0:
-            target_col = st.selectbox(
-                "타겟 열 선택（예측할 변수）", 
-                options=df_merged.columns, 
-                index=0  # 修复：默认选择第一个列，而非 -1
-            )
-            st.session_state.preprocess["target_col"] = target_col
+    
+    # 여기서부터 들여쓰기를 수정했습니다.
+    with col1:
+        st.markdown("### 데이터 기본 정보")
+        st.write(f"총 데이터 양：{len(df):,} 행 × {len(df.columns)} 열")
+        st.write("데이터 유형 분포：")
+        st.dataframe(df.dtypes.value_counts().reset_index(), use_container_width=True)
+    
+    with col2:
+        st.markdown("### 결측값 분포")
+        missing_info = df.isnull().sum()[df.isnull().sum() > 0].reset_index()
+        missing_info.columns = ["필드명", "결측값 개수"]
+        if len(missing_info) > 0:
+            st.dataframe(missing_info, use_container_width=True)
+            fig_missing = px.imshow(df.isnull(), color_continuous_scale="Reds", title="결측값 히트맵")
+            st.plotly_chart(fig_missing, use_container_width=True)
         else:
-            st.error("데이터에 열이 존재하지 않습니다！올바른 데이터 파일을 업로드하세요")
-            st.stop()
-        
-        # 특징 열 선택（타겟 열과 무관한 열 제외）
-        exclude_cols = st.multiselect(
-            "제외할 열 선택（예：ID、무관한 필드）", 
-            options=[col for col in df_merged.columns if col != target_col]
+            st.success("결측값이 없습니다！")
+    
+    # 2. 전처리 설정
+    st.divider()
+    st.markdown("### 전처리 매개변수 설정")
+    
+    # 타겟 열 선택
+    if len(df.columns) > 0:
+        target_col = st.selectbox(
+            "타겟 열 선택（예측할 변수）", 
+            options=df.columns, 
+            index=0 
         )
-        feature_cols = [col for col in df_merged.columns if col not in exclude_cols + [target_col]]
-        
-        # 特征列有效性校验
+        st.session_state.preprocess["target_col"] = target_col
+    else:
+        st.error("데이터에 열이 존재하지 않습니다！올바른 데이터 파일을 업로드하세요")
+        st.stop()
+    
+    # 특징 열 선택（타겟 열과 무관한 열 제외）
+    exclude_cols = st.multiselect(
+        "제외할 열 선택（예：ID、무관한 필드）", 
+        options=[col for col in df.columns if col != target_col]
+    )
+    feature_cols = [col for col in df.columns if col not in exclude_cols + [target_col]]
+    
+    # 특징 열 유효성 검사
+    if not feature_cols:
+        st.warning("특징 열이 선택되지 않았습니다！제외할 열을 조정하세요")
+    st.session_state.preprocess["feature_cols"] = feature_cols
+    
+    # 결측값 처리
+    st.markdown("#### 결측값 처리")
+    impute_strategy = st.selectbox("수치형 결측값 채우기 방식", options=["중앙값", "평균값", "최빈값"], index=0)
+    impute_strategy_map = {"중앙값": "median", "평균값": "mean", "최빈값": "most_frequent"}
+    
+    # 범주형 특징 인코딩
+    st.markdown("#### 범주형 특징 인코딩")
+    cat_encoding = st.selectbox("범주형 특징 인코딩 방식", options=["레이블 인코딩（LabelEncoder）", "원-핫 인코딩（OneHotEncoder）"], index=0)
+    
+    # 3. 전처리 실행
+    if st.button("전처리 시작"):
         if not feature_cols:
-            st.warning("특징 열이 선택되지 않았습니다！제외할 열을 조정하세요")
-        st.session_state.preprocess["feature_cols"] = feature_cols
+            st.error("전처리 실패：특징 열이 없습니다！")
+            st.stop() 
         
-        # 결측값 처리
-        st.markdown("#### 결측값 처리")
-        impute_strategy = st.selectbox("수치형 결측값 채우기 방식", options=["중앙값", "평균값", "최빈값"], index=0)
-        impute_strategy_map = {"중앙값": "median", "평균값": "mean", "최빈값": "most_frequent"}
-        
-        # 범주형 특징 인코딩
-        st.markdown("#### 범주형 특징 인코딩")
-        cat_encoding = st.selectbox("범주형 특징 인코딩 방식", options=["레이블 인코딩（LabelEncoder）", "원-핫 인코딩（OneHotEncoder）"], index=0)
-        
-        # 3. 전처리 실행（修复 continue 语法错误：替换为 st.stop()）
-        if st.button("전처리 시작"):
-            if not feature_cols:
-                st.error("전처리 실패：특징 열이 없습니다！")
-                st.stop()  # 修复：用 st.stop() 替代 continue，停止后续代码执行
+        try:
+            # 위에서 필터링한 'df'를 사용하도록 변경
+            X = df[feature_cols].copy()
+            y = df[target_col].copy()
             
-            try:
-                X = df_merged[feature_cols].copy()
-                y = df_merged[target_col].copy()
-                
-                # 수치형과 범주형 특징 분리
-                num_cols = X.select_dtypes(include=["int64", "float64"]).columns
-                cat_cols = X.select_dtypes(include=["object", "category"]).columns
-                
-                # 수치형 전처리：결측값 채우기 + 표준화
-                imputer = SimpleImputer(strategy=impute_strategy_map[impute_strategy])
+            # 수치형과 범주형 특징 분리
+            num_cols = X.select_dtypes(include=["int64", "float64"]).columns
+            cat_cols = X.select_dtypes(include=["object", "category"]).columns
+            
+            # 수치형 전처리：결측값 채우기 + 표준화
+            imputer = SimpleImputer(strategy=impute_strategy_map[impute_strategy])
+            # 수치형 컬럼이 있는 경우에만 처리
+            if len(num_cols) > 0:
                 X[num_cols] = imputer.fit_transform(X[num_cols])
-                
                 scaler = StandardScaler()
                 X[num_cols] = scaler.fit_transform(X[num_cols])
+            
+            # 범주형 전처리：결측값 채우기 + 인코딩
+            encoders = {}
+            for col in cat_cols:
+                # 범주형 결측값을 "알 수 없음"으로 채우기
+                X[col] = X[col].fillna("알 수 없음").astype(str)
                 
-                # 범주형 전처리：결측값 채우기 + 인코딩
-                encoders = {}
-                for col in cat_cols:
-                    # 범주형 결측값을 "알 수 없음"으로 채우기
-                    X[col] = X[col].fillna("알 수 없음").astype(str)
-                    
-                    if cat_encoding == "레이블 인코딩（LabelEncoder）":
-                        le = LabelEncoder()
-                        X[col] = le.fit_transform(X[col])
-                        encoders[col] = le
-                    else:  # 원-핫 인코딩
-                        ohe = OneHotEncoder(sparse_output=False, drop="first")
-                        ohe_result = ohe.fit_transform(X[[col]])
-                        ohe_cols = [f"{col}_{cat}" for cat in ohe.categories_[0][1:]]  # 첫 번째 범주 제외（다중공선성 방지）
-                        X = pd.concat([X.drop(col, axis=1), pd.DataFrame(ohe_result, columns=ohe_cols)], axis=1)
-                        encoders[col] = (ohe, ohe_cols)
-                
-                # 전처리组件 저장
-                st.session_state.preprocess["imputer"] = imputer
+                if cat_encoding == "레이블 인코딩（LabelEncoder）":
+                    le = LabelEncoder()
+                    X[col] = le.fit_transform(X[col])
+                    encoders[col] = le
+                else:  # 원-핫 인코딩
+                    ohe = OneHotEncoder(sparse_output=False, drop="first")
+                    ohe_result = ohe.fit_transform(X[[col]])
+                    ohe_cols = [f"{col}_{cat}" for cat in ohe.categories_[0][1:]]
+                    X = pd.concat([X.drop(col, axis=1), pd.DataFrame(ohe_result, columns=ohe_cols)], axis=1)
+                    encoders[col] = (ohe, ohe_cols)
+            
+            # 전처리 컴포넌트 저장
+            st.session_state.preprocess["imputer"] = imputer
+            if len(num_cols) > 0:
                 st.session_state.preprocess["scaler"] = scaler
-                st.session_state.preprocess["encoders"] = encoders
-                st.session_state.preprocess["feature_cols"] = list(X.columns)  # 업데이트된 특징 열（원-핫 인코딩 열 포함）
-                
-                # 전처리된 데이터 저장
-                st.session_state.data["X_processed"] = X
-                st.session_state.data["y_processed"] = y
-                
-                st.success("데이터 전처리 완료！")
-                st.markdown(f"전처리 후 특징 수：{len(X.columns)}")
-                st.dataframe(X.head(3), use_container_width=True)
-            except Exception as e:
-                st.error(f"전처리 실패：{str(e)}")
+            else:
+                 st.session_state.preprocess["scaler"] = None
+                 
+            st.session_state.preprocess["encoders"] = encoders
+            st.session_state.preprocess["feature_cols"] = list(X.columns)
+            
+            # 전처리된 데이터 저장
+            st.session_state.data["X_processed"] = X
+            st.session_state.data["y_processed"] = y
+            
+            st.success("데이터 전처리 완료！")
+            st.markdown(f"전처리 후 특징 수：{len(X.columns)}")
+            st.dataframe(X.head(3), use_container_width=True)
+        except Exception as e:
+            st.error(f"전처리 실패：{str(e)}")
 
 # ----------------------
 # 단계 4：모델 학습（修复 stratify 参数错误）
