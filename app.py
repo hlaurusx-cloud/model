@@ -345,7 +345,7 @@ elif st.session_state.step == 2:
         st.info("🔧 데이터 전처리를 위해 왼쪽 사이드바에서「데이터 전처리」단계로 이동하세요")
 
 # ----------------------
-# 3. 데이터 전처리（Step 3） - 修复缩进与变量名冲突
+# 3. 데이터 전처리（Step 3） - 修复版
 # ----------------------
 elif st.session_state.step == 3:
     st.subheader("🛠 데이터 전처리 및 변수 선택 (Smart Stepwise)")
@@ -356,18 +356,18 @@ elif st.session_state.step == 3:
         st.stop()
     
     # 데이터 복사 (원본 보호)
-    df_current = st.session_state.data["merged"].copy()
+    df_raw = st.session_state.data["merged"].copy()
 
     # [0] 컬럼명 강제 정리 (오류 방지)
     # MultiIndex 병합
-    if isinstance(df_current.columns, pd.MultiIndex):
-        df_current.columns = ['_'.join(map(str, col)).strip() for col in df_current.columns.values]
+    if isinstance(df_raw.columns, pd.MultiIndex):
+        df_raw.columns = ['_'.join(map(str, col)).strip() for col in df_raw.columns.values]
     
     # 중복 컬럼명 처리
-    if df_current.columns.has_duplicates:
+    if df_raw.columns.has_duplicates:
         new_columns = []
         seen_counts = {}
-        for col in df_current.columns:
+        for col in df_raw.columns:
             col_name = str(col).strip()
             if col_name == "": col_name = "Unnamed"
             if col_name in seen_counts:
@@ -376,23 +376,23 @@ elif st.session_state.step == 3:
             else:
                 seen_counts[col_name] = 0
                 new_columns.append(col_name)
-        df_current.columns = new_columns
-        st.session_state.data["merged"] = df_current  # 수정된 컬럼명 저장
+        df_raw.columns = new_columns
+        st.session_state.data["merged"] = df_raw  # 수정된 컬럼명 저장
 
     # -------------------------------------------------------
     # [1] 타겟 변수 선택
     # -------------------------------------------------------
     st.markdown("### 1️⃣ 타겟 변수(예측 목표) 설정")
     
-    all_clean_cols = df_current.columns.tolist()
+    all_clean_cols = df_raw.columns.tolist()
     
     # 타겟 후보군 자동 필터링
     target_candidates = []
     dropped_candidates = []
     for col in all_clean_cols:
         # ID거나 상수인 경우 제외
-        is_id = (len(df_current) > 50) and (df_current[col].nunique() == len(df_current))
-        is_constant = (df_current[col].nunique() <= 1)
+        is_id = (len(df_raw) > 50) and (df_raw[col].nunique() == len(df_raw))
+        is_constant = (df_raw[col].nunique() <= 1)
         if is_id or is_constant:
             dropped_candidates.append(col)
         else:
@@ -442,11 +442,12 @@ elif st.session_state.step == 3:
             with st.spinner("데이터 분석 중..."):
                 try:
                     # 분석용 데이터 준비
-                    temp_df = df_current.copy()
+                    temp_df = df_raw.copy()
                     
                     # 결측치 0으로 채우기 (오류 방지)
                     num_cols = temp_df.select_dtypes(include=[np.number]).columns
-                    temp_df[num_cols] = temp_df[num_cols].fillna(0)
+                    if len(num_cols) > 0:
+                        temp_df[num_cols] = temp_df[num_cols].fillna(0)
                     
                     # 범주형 숫자로 변환
                     cat_cols = temp_df.select_dtypes(exclude=[np.number]).columns
@@ -458,7 +459,7 @@ elif st.session_state.step == 3:
                     X_try = temp_df[feature_candidates]
                     y_try = temp_df[target_col]
 
-                    # 모델 임포트 (여기서 임포트하여 오류 방지)
+                    # 모델 임포트
                     from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
                     from sklearn.feature_selection import SelectFromModel
 
@@ -519,11 +520,11 @@ elif st.session_state.step == 3:
     # [4] 전처리 실행
     # -------------------------------------------------------
     st.divider()
-    if st.button("🚀 전처리 실행 (최종)", type="primary", use_container_width=True):
+    if st.button("🚀 전처리 실행 및 데이터 생성", type="primary", use_container_width=True):
         try:
             # 최종 데이터 생성
             final_cols = feature_cols + [target_col]
-            df_final = df_current[final_cols].copy()
+            df_final = df_raw[final_cols].copy()
             
             X = df_final[feature_cols]
             y = df_final[target_col]
@@ -555,6 +556,7 @@ elif st.session_state.step == 3:
                 else:
                     ohe = OneHotEncoder(sparse_output=False, drop="first", handle_unknown='ignore')
                     ohe_out = ohe.fit_transform(X[[c]])
+                    # 컬럼명 정리
                     new_names = [f"{c}_{str(cat).replace(' ', '')}" for cat in ohe.categories_[0][1:]]
                     df_ohe = pd.DataFrame(ohe_out, columns=new_names, index=X.index)
                     X = pd.concat([X.drop(columns=[c]), df_ohe], axis=1)
@@ -574,7 +576,6 @@ elif st.session_state.step == 3:
             
         except Exception as e:
             st.error(f"최종 처리 중 오류: {e}")
-            
             
 # ----------------------
 # 단계 4：모델 학습（修复 stratify 参数错误）
