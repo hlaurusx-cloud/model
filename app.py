@@ -786,4 +786,3 @@ elif st.session_state.step == 6:
         
         fig_importance = px.bar(feature_importance, x="중요도", y="특징명", orientation="h", color="중요도", color_continuous_scale="viridis")
         st.plotly_chart(fig_importance, use_container_width=True)
-app.py
