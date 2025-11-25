@@ -294,6 +294,19 @@ elif st.session_state.step == 2:
                     stats_df = plot_df.groupby(x_var)[y_var].agg([
                         "count", "mean", "std", "min", "25%", "50%", "75%", "max"
                     ]).round(3)
+                    # 기존 통계 정보 부분 수정
+                    st.markdown("### 📋 통계 정보")
+# 분위수 계산을 명시적으로 지정
+                    stats_df = plot_df.groupby(x_var)[y_var].agg(
+                        count="count",
+                        mean="mean",
+                        std="std",
+                        min="min",
+                        "25%"=lambda x: x.quantile(0.25),  # 25% 분위수
+                        "50%"=lambda x: x.quantile(0.5),   # 중앙값(50% 분위수)
+                        "75%"=lambda x: x.quantile(0.75),  # 75% 분위수
+                        max="max"
+                        ).round(3)
                     stats_df.columns = ["데이터 개수", "평균값", "표준편차", "최소값", "제1사분위수", "중앙값", "제3사분위수", "최대값"]
                     st.dataframe(stats_df, use_container_width=True)
                 
