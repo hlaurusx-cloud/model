@@ -324,10 +324,15 @@ elif st.session_state.step == 2:
                     
                     # 기존 통계 정보
                     st.markdown("### 📋 통계 정보")
-                    stats_df = plot_df.groupby(x_var)[y_var].agg([
-                        "count", "mean", "std", "min", "25%", "50%", "75%", "max"
-                    ]).round(3)
+                    # agg 대신 describe()를 사용하여 안전하게 통계량 추출
+                    stats_desc = plot_df.groupby(x_var)[y_var].describe()
+                    
+                    # 필요한 열만 선택 및 순서 정렬
+                    stats_df = stats_desc[["count", "mean", "std", "min", "25%", "50%", "75%", "max"]].round(3)
+                    
+                    # 한국어 컬럼명 변경
                     stats_df.columns = ["데이터 개수", "평균값", "표준편차", "최소값", "제1사분위수", "중앙값", "제3사분위수", "최대값"]
+                    
                     st.dataframe(stats_df, use_container_width=True)
                 
                 except Exception as e:
