@@ -345,86 +345,235 @@ elif st.session_state.step == 2:
         st.info("🔧 데이터 전처리를 위해 왼쪽 사이드바에서「데이터 전처리」단계로 이동하세요")
 
 # ----------------------
-# 3. 数据预处理（Step 3） - 修复版
+# 3. 데이터 전처리（Step 3） - 修复缩进与变量名冲突
 # ----------------------
 elif st.session_state.step == 3:
-    # 必要的库导入（防止因缺少库而报错）
-    from sklearn.impute import SimpleImputer
-    from sklearn.preprocessing import StandardScaler, LabelEncoder, OneHotEncoder
-    from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
-    from sklearn.feature_selection import SelectFromModel
+    st.subheader("🛠 데이터 전처리 및 변수 선택 (Smart Stepwise)")
     
-    st.subheader("🛠 数据预处理及变量选择")
-    
-    # 1. 检查数据
+    # 1. 데이터 로드 확인
     if "merged" not in st.session_state.data or st.session_state.data["merged"] is None:
-        st.error("数据未加载，请返回 Step 1 上传数据。")
+        st.error("❌ 데이터가 없습니다. Step 1에서 파일을 다시 업로드해주세요.")
         st.stop()
-        
-    df = st.session_state.data["merged"].copy()
     
-    # 2. 简单的列名清洗（防止乱码报错）
-    df.columns = [str(c).strip() for c in df.columns]
+    # 데이터 복사 (원본 보호)
+    df_current = st.session_state.data["merged"].copy()
+
+    # [0] 컬럼명 강제 정리 (오류 방지)
+    # MultiIndex 병합
+    if isinstance(df_current.columns, pd.MultiIndex):
+        df_current.columns = ['_'.join(map(str, col)).strip() for col in df_current.columns.values]
     
-    # 3. 选择 Target
-    st.markdown("### 1️⃣ 选择预测目标 (Target)")
-    all_cols = df.columns.tolist()
-    target_col = st.selectbox("请选择您要预测的目标变量：", all_cols, key="target_fix_box")
+    # 중복 컬럼명 처리
+    if df_current.columns.has_duplicates:
+        new_columns = []
+        seen_counts = {}
+        for col in df_current.columns:
+            col_name = str(col).strip()
+            if col_name == "": col_name = "Unnamed"
+            if col_name in seen_counts:
+                seen_counts[col_name] += 1
+                new_columns.append(f"{col_name}_{seen_counts[col_name]}")
+            else:
+                seen_counts[col_name] = 0
+                new_columns.append(col_name)
+        df_current.columns = new_columns
+        st.session_state.data["merged"] = df_current  # 수정된 컬럼명 저장
+
+    # -------------------------------------------------------
+    # [1] 타겟 변수 선택
+    # -------------------------------------------------------
+    st.markdown("### 1️⃣ 타겟 변수(예측 목표) 설정")
+    
+    all_clean_cols = df_current.columns.tolist()
+    
+    # 타겟 후보군 자동 필터링
+    target_candidates = []
+    dropped_candidates = []
+    for col in all_clean_cols:
+        # ID거나 상수인 경우 제외
+        is_id = (len(df_current) > 50) and (df_current[col].nunique() == len(df_current))
+        is_constant = (df_current[col].nunique() <= 1)
+        if is_id or is_constant:
+            dropped_candidates.append(col)
+        else:
+            target_candidates.append(col)
+            
+    if not target_candidates: target_candidates = all_clean_cols
+
+    # 세션 상태 초기화
+    if "target_col_temp" not in st.session_state:
+        st.session_state.target_col_temp = target_candidates[0]
+    if st.session_state.target_col_temp not in target_candidates:
+        st.session_state.target_col_temp = target_candidates[0]
+
+    col_t1, col_t2 = st.columns([2, 1])
+    with col_t1:
+        target_col = st.selectbox(
+            "예측할 타겟 컬럼 선택", 
+            options=target_candidates,
+            index=target_candidates.index(st.session_state.target_col_temp),
+            key="target_selector_box"
+        )
+    with col_t2:
+        if dropped_candidates:
+            st.info(f"💡 {len(dropped_candidates)}개 변수 자동 제외됨 (ID/상수)")
+
+    # 선택 결과 저장
+    st.session_state.target_col_temp = target_col
     st.session_state.preprocess["target_col"] = target_col
-    
-    # 4. 选择 Features (变量)
-    st.markdown("### 2️⃣ 选择特征变量 (Features)")
-    feature_candidates = [c for c in all_cols if c != target_col]
-    
-    # 增加一个全选/智能选择的按钮逻辑过于复杂可能导致缩进错误，这里用最稳妥的手动选择
-    feature_cols = st.multiselect(
-        "请选择用于分析的变量（可多选）：",
-        options=feature_candidates,
-        default=feature_candidates[:5] # 默认选前5个，防止空选
-    )
-    
-    if not feature_cols:
-        st.warning("请至少选择一个变量。")
-        st.stop()
-        
-    st.session_state.preprocess["feature_cols"] = feature_cols
-    
-    # 5. 执行预处理
+
     st.divider()
-    if st.button("🚀 执行预处理", type="primary"):
+
+    # -------------------------------------------------------
+    # [2] 스마트 변수 선택 (Stepwise)
+    # -------------------------------------------------------
+    st.markdown("### 2️⃣ 변수 선택 (Stepwise)")
+    
+    feature_candidates = [c for c in target_candidates if c != target_col]
+    
+    if "selected_features_temp" not in st.session_state:
+        st.session_state.selected_features_temp = feature_candidates
+
+    col_tool1, col_tool2 = st.columns([1, 3])
+    
+    with col_tool1:
+        st.write("")
+        if st.button("🤖 AI 스마트 변수 선택", type="primary", use_container_width=True):
+            with st.spinner("데이터 분석 중..."):
+                try:
+                    # 분석용 데이터 준비
+                    temp_df = df_current.copy()
+                    
+                    # 결측치 0으로 채우기 (오류 방지)
+                    num_cols = temp_df.select_dtypes(include=[np.number]).columns
+                    temp_df[num_cols] = temp_df[num_cols].fillna(0)
+                    
+                    # 범주형 숫자로 변환
+                    cat_cols = temp_df.select_dtypes(exclude=[np.number]).columns
+                    for c in cat_cols:
+                        temp_df[c] = temp_df[c].fillna("unknown").astype(str)
+                        temp_df[c] = pd.factorize(temp_df[c])[0]
+
+                    # X, y 분리
+                    X_try = temp_df[feature_candidates]
+                    y_try = temp_df[target_col]
+
+                    # 모델 임포트 (여기서 임포트하여 오류 방지)
+                    from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+                    from sklearn.feature_selection import SelectFromModel
+
+                    # 작업 유형 판단
+                    is_class = False
+                    if y_try.dtype == 'object' or len(np.unique(y_try)) < 20:
+                        is_class = True
+                    
+                    if is_class:
+                        if y_try.dtype == 'object': y_try = pd.factorize(y_try)[0]
+                        model = RandomForestClassifier(n_estimators=30, random_state=42, n_jobs=-1)
+                    else:
+                        model = RandomForestRegressor(n_estimators=30, random_state=42, n_jobs=-1)
+                    
+                    model.fit(X_try, y_try)
+                    
+                    # 중요 변수 선택
+                    selector = SelectFromModel(model, prefit=True, threshold="mean")
+                    selected_idxs = selector.get_support(indices=True)
+                    best_features = X_try.columns[selected_idxs].tolist()
+                    
+                    st.session_state.selected_features_temp = best_features
+                    st.success(f"✅ 분석 완료! {len(best_features)}개 중요 변수 발견.")
+                    st.rerun()
+
+                except Exception as e:
+                    st.error(f"분석 중 오류 발생: {str(e)}")
+
+    with col_tool2:
+        valid_defaults = [c for c in st.session_state.selected_features_temp if c in feature_candidates]
+        feature_cols = st.multiselect(
+            "분석에 사용할 변수",
+            options=feature_candidates,
+            default=valid_defaults,
+            key="final_feature_select"
+        )
+        
+    if not feature_cols:
+        st.warning("변수를 최소 1개 이상 선택해야 합니다.")
+        st.stop()
+    
+    st.session_state.preprocess["feature_cols"] = feature_cols
+
+    # -------------------------------------------------------
+    # [3] 전처리 상세 설정
+    # -------------------------------------------------------
+    st.divider()
+    with st.expander("⚙️ 고급 전처리 설정 (결측치/인코딩)", expanded=False):
+        c_opt1, c_opt2 = st.columns(2)
+        with c_opt1:
+            method_impute = st.selectbox("결측치 처리", ["중앙값(Median)", "평균값(Mean)", "0으로 채우기", "최빈값(Mode)"])
+        with c_opt2:
+            method_encode = st.selectbox("범주형 인코딩", ["Label Encoding", "One-Hot Encoding"])
+            
+    map_impute = {"중앙값(Median)": "median", "평균값(Mean)": "mean", "0으로 채우기": "constant", "최빈값(Mode)": "most_frequent"}
+    
+    # -------------------------------------------------------
+    # [4] 전처리 실행
+    # -------------------------------------------------------
+    st.divider()
+    if st.button("🚀 전처리 실행 (최종)", type="primary", use_container_width=True):
         try:
-            # 准备数据
-            X = df[feature_cols].copy()
-            y = df[target_col].copy()
+            # 최종 데이터 생성
+            final_cols = feature_cols + [target_col]
+            df_final = df_current[final_cols].copy()
             
-            # 数值/类别分离
-            num_cols = X.select_dtypes(include=[np.number]).columns
-            cat_cols = X.select_dtypes(exclude=[np.number]).columns
+            X = df_final[feature_cols]
+            y = df_final[target_col]
             
-            # 填充缺失值 (数值用0，类别用unknown) - 最稳妥方案
-            if len(num_cols) > 0:
-                X[num_cols] = X[num_cols].fillna(0)
-            for c in cat_cols:
-                X[c] = X[c].fillna("unknown").astype(str)
+            cols_num = X.select_dtypes(include=[np.number]).columns
+            cols_cat = X.select_dtypes(exclude=[np.number]).columns
+            
+            # 결측치 처리
+            args_impute = {"strategy": map_impute[method_impute]}
+            if map_impute[method_impute] == "constant": args_impute["fill_value"] = 0
+            
+            imputer = SimpleImputer(**args_impute)
+            
+            if len(cols_num) > 0:
+                X_num_filled = imputer.fit_transform(X[cols_num])
+                scaler = StandardScaler()
+                X[cols_num] = scaler.fit_transform(X_num_filled)
+            else:
+                scaler = None
                 
-            # 简单编码
+            # 인코딩
             encoders = {}
-            # Label Encoding
-            le = LabelEncoder()
-            for c in cat_cols:
-                X[c] = le.fit_transform(X[c])
-                encoders[c] = le
+            for c in cols_cat:
+                X[c] = X[c].fillna("unknown").astype(str)
+                if "Label" in method_encode:
+                    le = LabelEncoder()
+                    X[c] = le.fit_transform(X[c])
+                    encoders[c] = le
+                else:
+                    ohe = OneHotEncoder(sparse_output=False, drop="first", handle_unknown='ignore')
+                    ohe_out = ohe.fit_transform(X[[c]])
+                    new_names = [f"{c}_{str(cat).replace(' ', '')}" for cat in ohe.categories_[0][1:]]
+                    df_ohe = pd.DataFrame(ohe_out, columns=new_names, index=X.index)
+                    X = pd.concat([X.drop(columns=[c]), df_ohe], axis=1)
+                    encoders[c] = (ohe, new_names)
             
-            # 保存结果
+            # 결과 저장
+            st.session_state.preprocess["imputer"] = imputer
+            st.session_state.preprocess["scaler"] = scaler
             st.session_state.preprocess["encoders"] = encoders
+            st.session_state.preprocess["feature_cols"] = list(X.columns)
+            
             st.session_state.data["X_processed"] = X
             st.session_state.data["y_processed"] = y
             
-            st.success("✅ 预处理成功！请前往 '模型训练' 步骤。")
-            st.dataframe(X.head())
+            st.success(f"데이터 전처리 완료! (총 {len(X.columns)}개 변수)")
+            st.dataframe(X.head(3), use_container_width=True)
             
         except Exception as e:
-            st.error(f"处理出错: {e}")
+            st.error(f"최종 처리 중 오류: {e}")
             
             
 # ----------------------
