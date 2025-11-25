@@ -676,6 +676,7 @@ elif st.session_state.step == 4:
                 except Exception as e:
                     st.error(f"모델 학습 실패：{str(e)}")
 
+
 # -------------------------- 단계 5: 혼합 모델 예측 (완성 버전)--------------------------
 def predict(input_data):
     """
