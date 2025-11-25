@@ -345,18 +345,71 @@ elif st.session_state.step == 2:
         st.info("🔧 데이터 전처리를 위해 왼쪽 사이드바에서「데이터 전처리」단계로 이동하세요")
 
 # ----------------------
-# 단계 3：데이터 전처리（修复 selectbox 错误 + continue 语法错误）
+# 단계 3：데이터 전처리 및 변수 선택
 # ----------------------
 elif st.session_state.step == 3:
-    st.subheader("🧹 데이터 전처리")
+    st.subheader("🛠 데이터 전처리 및 변수 선택")
     
-    if st.session_state.data["merged"] is None:
-        st.warning("먼저「데이터 업로드」단계를 완료하세요")
-    else:
-        df_merged = st.session_state.data["merged"]
+    # 원본 데이터 가져오기
+    df_raw = st.session_state.data["merged"]
+    
+    # --- [추가 기능] 1. 변수 중요도 분석 및 선택 ---
+    st.markdown("### 1️⃣ 변수 선택 (Feature Selection)")
+    
+    with st.expander("🔎 변수 중요도 분석 도구 열기 (상관관계)", expanded=True):
+        st.info("변수가 너무 많은 경우, 타겟(예측할 값)과 상관관계가 높은 변수 위주로 선택하세요.")
         
-        # 1. 데이터 개요（결측값、데이터 유형）
-        col1, col2 = st.columns(2)
+        # 1-1. 분석을 위한 임시 타겟 설정 (상관관계 확인용)
+        numeric_cols = df_raw.select_dtypes(include=[np.number]).columns.tolist()
+        if numeric_cols:
+            target_col_analysis = st.selectbox("분석 기준이 될 타겟 변수를 선택하세요 (상관관계 확인용)", numeric_cols)
+            
+            # 상관관계 계산
+            corr_matrix = df_raw[numeric_cols].corr()
+            target_corr = corr_matrix[[target_col_analysis]].sort_values(by=target_col_analysis, ascending=False)
+            
+            # 1-2. 상관관계 시각화 (막대 그래프)
+            st.markdown(f"**'{target_col_analysis}' 변수와의 상관관계 순위**")
+            fig_corr = px.bar(
+                target_corr, 
+                x=target_corr.index, 
+                y=target_col_analysis,
+                title=f"Target [{target_col_analysis}] 과의 상관계수 (절대값이 클수록 중요)",
+                color=target_col_analysis,
+                color_continuous_scale='RdBu_r'
+            )
+            st.plotly_chart(fig_corr, use_container_width=True)
+        else:
+            st.warning("숫자형 변수가 없어 상관관계 분석을 할 수 없습니다.")
+
+    # 1-3. 최종 변수 선택 (Multiselect)
+    st.markdown("#### ✅ 분석에 사용할 변수를 최종 선택하세요")
+    all_columns = df_raw.columns.tolist()
+    selected_columns = st.multiselect(
+        "제거할 변수는 리스트에서 'x'를 눌러 삭제하세요:",
+        options=all_columns,
+        default=all_columns  # 기본값: 전체 선택
+    )
+
+    if not selected_columns:
+        st.error("최소 하나의 변수를 선택해야 합니다.")
+        st.stop()
+
+    # 선택된 변수만으로 데이터프레임 갱신
+    df = df_raw[selected_columns]
+    
+    st.success(f"선택된 변수 개수: {len(selected_columns)}개 / 전체 데이터 크기: {df.shape}")
+    st.divider()
+
+    # --- [기존 로직] 2. 결측치 처리 및 인코딩 (여기부터는 기존 코드와 연결) ---
+    st.markdown("### 2️⃣ 결측치 처리 및 데이터 변환")
+    
+    # ... (이 아래로 기존의 결측치 처리, 인코딩 코드가 이어지면 됩니다)
+    # 주의: 아래 로직부터는 'df_raw'가 아니라 위에서 필터링된 'df'를 사용해야 합니다.
+    
+    # (예시: 기존 코드의 흐름 유지)
+    col1, col2 = st.columns(2)
+    # ...
         with col1:
             st.markdown("### 데이터 기본 정보")
             st.write(f"총 데이터 양：{len(df_merged):,} 행 × {len(df_merged.columns)} 열")
