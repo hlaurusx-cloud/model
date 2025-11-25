@@ -345,7 +345,7 @@ elif st.session_state.step == 2:
         st.info("🔧 데이터 전처리를 위해 왼쪽 사이드바에서「데이터 전처리」단계로 이동하세요")
 
 # ----------------------
-# 3. 데이터 전처리（Step 3） - 스마트 변수 선택 기능 추가
+# 3. 데이터 전처리（Step 3） - 스마트 타겟 필터링 & Stepwise
 # ----------------------
 elif st.session_state.step == 3:
     st.subheader("🛠 데이터 전처리 및 변수 선택 (Smart Stepwise)")
@@ -357,23 +357,52 @@ elif st.session_state.step == 3:
         st.stop()
 
     # -------------------------------------------------------
-    # [1] 타겟 변수 우선 선택 (Stepwise를 위해 필수)
+    # [1] 타겟 변수 우선 선택 (스마트 필터링 적용)
     # -------------------------------------------------------
     st.markdown("### 1️⃣ 타겟 변수(예측 목표) 설정")
-    st.info("💡 변수를 자동 선택하기 위해, 무엇을 예측할지 먼저 정해야 합니다.")
     
-    all_cols = df_raw.columns.tolist()
-    
-    # 세션 상태에 타겟 변수가 없으면 기본값 설정
-    if "target_col_temp" not in st.session_state:
-        st.session_state.target_col_temp = all_cols[0]
+    # [수정] 타겟 후보군 필터링 로직
+    target_candidates = []
+    dropped_candidates = [] # 제외된 컬럼 확인용
 
-    target_col = st.selectbox(
-        "예측할 타겟 컬럼 선택", 
-        options=all_cols,
-        index=all_cols.index(st.session_state.target_col_temp) if st.session_state.target_col_temp in all_cols else 0,
-        key="target_selector"
-    )
+    for col in df_raw.columns:
+        # 조건 1: 모든 값이 다 다른 경우 (ID일 확률 높음) -> 데이터가 50행 이상일 때만 적용
+        if len(df_raw) > 50 and df_raw[col].nunique() == len(df_raw):
+            dropped_candidates.append(col)
+            continue
+        # 조건 2: 값이 하나밖에 없는 경우 (상수) -> 예측 의미 없음
+        if df_raw[col].nunique() <= 1:
+            dropped_candidates.append(col)
+            continue
+        
+        target_candidates.append(col)
+    
+    # 만약 필터링 결과 남은게 없으면 원본 전체 사용 (안전장치)
+    if not target_candidates:
+        target_candidates = df_raw.columns.tolist()
+
+    # 세션 상태 초기화 및 유효성 검사
+    if "target_col_temp" not in st.session_state:
+        st.session_state.target_col_temp = target_candidates[0]
+    
+    # 이전에 선택한 타겟이 필터링되어 사라졌을 경우 대비
+    if st.session_state.target_col_temp not in target_candidates:
+         st.session_state.target_col_temp = target_candidates[0]
+
+    col_t1, col_t2 = st.columns([2, 1])
+    with col_t1:
+        target_col = st.selectbox(
+            "예측할 타겟 컬럼 선택 (ID 등 무의미한 변수는 자동 제외됨)", 
+            options=target_candidates,
+            index=target_candidates.index(st.session_state.target_col_temp),
+            key="target_selector"
+        )
+    with col_t2:
+        if dropped_candidates:
+            with st.popover("🗑 제외된 컬럼 보기"):
+                st.write("타겟으로 부적절하여 목록에서 숨겨진 컬럼들:")
+                st.write(dropped_candidates)
+
     # 선택값 업데이트
     st.session_state.target_col_temp = target_col
     st.session_state.preprocess["target_col"] = target_col
@@ -385,76 +414,78 @@ elif st.session_state.step == 3:
     # -------------------------------------------------------
     st.markdown("### 2️⃣ 변수 선택 (Stepwise)")
     
+    all_cols = df_raw.columns.tolist() # Feature 후보는 전체에서 가져오되 타겟만 뺌
+    
     # 세션 상태에 선택된 변수 리스트 초기화
     if "selected_features_temp" not in st.session_state:
-        # 기본값: 타겟을 제외한 모든 변수
-        st.session_state.selected_features_temp = [c for c in all_cols if c != target_col]
+        # 기본값: 타겟 제외한 나머지 중 ID같은거 뺀 것들
+        st.session_state.selected_features_temp = [c for c in target_candidates if c != target_col]
 
     col_tool1, col_tool2 = st.columns([1, 3])
     
     with col_tool1:
         # 자동 선택 버튼
-        if st.button("🤖 AI 스마트 변수 선택\n(Stepwise 실행)", type="primary"):
+        st.write("") # 줄맞춤용
+        if st.button("🤖 AI 스마트 변수 선택\n(Stepwise 실행)", type="primary", use_container_width=True):
             with st.spinner("데이터 분석 중... 최적의 변수를 찾고 있습니다..."):
                 try:
                     # 1. 분석용 임시 데이터 준비
                     temp_df = df_raw.copy()
                     
-                    # 결측치 임시 처리 (분석용)
+                    # 결측치 임시 처리
                     num_temp = temp_df.select_dtypes(include=[np.number]).columns
                     cat_temp = temp_df.select_dtypes(exclude=[np.number]).columns
                     
-                    # 수치형: 평균 대치
                     if len(num_temp) > 0:
                         imputer = SimpleImputer(strategy='mean')
                         temp_df[num_temp] = imputer.fit_transform(temp_df[num_temp])
                     
-                    # 범주형: Factorize (숫자로 변환)
                     for c in cat_temp:
                         temp_df[c] = pd.factorize(temp_df[c])[0]
                     
                     # X, y 분리
-                    X_temp = temp_df.drop(columns=[target_col])
+                    X_temp = temp_df.drop(columns=[target_col], errors='ignore')
+                    # X에서도 ID같은거 빼주면 좋음
+                    X_temp = X_temp[[c for c in X_temp.columns if c in target_candidates]] # 타겟 후보군이었던 애들만 Feature 후보로
+
                     y_temp = temp_df[target_col]
                     
-                    # 2. 모델 기반 중요도 산출 (RandomForest)
+                    # 2. 모델 기반 중요도 산출
                     from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
                     from sklearn.feature_selection import SelectFromModel
 
-                    # 작업 유형에 따라 모델 선택
                     if st.session_state.task == "logit" or (y_temp.dtype == 'object' or len(y_temp.unique()) < 10):
-                        # 분류 문제 (타겟이 문자열이거나 고유값이 적음)
                         model_sel = RandomForestClassifier(n_estimators=50, random_state=42, n_jobs=-1)
-                        if y_temp.dtype == 'object': # 타겟이 문자열이면 숫자 변환
+                        if y_temp.dtype == 'object': 
                             y_temp = pd.factorize(y_temp)[0]
                     else:
-                        # 회귀 문제
                         model_sel = RandomForestRegressor(n_estimators=50, random_state=42, n_jobs=-1)
 
                     model_sel.fit(X_temp, y_temp)
                     
-                    # 3. 중요도가 평균 이상인 변수 선택
+                    # 3. 중요도 기반 선택
                     selector = SelectFromModel(model_sel, prefit=True, threshold="mean")
                     selected_indices = selector.get_support(indices=True)
                     recommended_features = X_temp.columns[selected_indices].tolist()
                     
-                    # 결과 업데이트
                     st.session_state.selected_features_temp = recommended_features
-                    st.success(f"✅ 분석 완료! 중요 변수 {len(recommended_features)}개를 선택했습니다.")
-                    st.rerun() # 화면 갱신하여 결과 반영
+                    st.success(f"✅ 분석 완료! {len(recommended_features)}개 변수 추천됨.")
+                    st.rerun()
 
                 except Exception as e:
-                    st.error(f"변수 선택 분석 중 오류 발생: {e}")
+                    st.error(f"분석 오류: {e}")
 
     with col_tool2:
-        # Multiselect: 자동 선택된 결과가 default로 들어감
+        # Multiselect
+        # 옵션 리스트: 타겟 제외, 그리고 기왕이면 ID 같은것도 제외된 목록에서 선택하도록 유도
+        feature_options = [c for c in target_candidates if c != target_col]
+        
         feature_cols = st.multiselect(
-            "분석에 사용할 변수 (자동 선택됨, 필요시 수정 가능)",
-            options=[c for c in all_cols if c != target_col],
-            default= [c for c in st.session_state.selected_features_temp if c != target_col],
+            "분석에 사용할 변수 (자동 선택됨)",
+            options=feature_options,
+            default=[c for c in st.session_state.selected_features_temp if c in feature_options],
             key="feature_multiselect"
         )
-        st.caption(f"현재 선택된 변수 개수: {len(feature_cols)}개")
 
     # 최종 변수 확정
     if not feature_cols:
@@ -464,64 +495,54 @@ elif st.session_state.step == 3:
     st.session_state.preprocess["feature_cols"] = feature_cols
     
     # -------------------------------------------------------
-    # [3] 전처리 상세 설정 (Imputer / Encoder)
+    # [3] 전처리 상세 설정
     # -------------------------------------------------------
     st.divider()
-    st.markdown("### 3️⃣ 전처리 상세 옵션")
-    
-    col_opt1, col_opt2 = st.columns(2)
-    with col_opt1:
-        impute_strategy = st.selectbox("빈 값(결측치) 채우기 방식", ["중앙값(Median)", "평균값(Mean)", "0으로 채우기", "최빈값(Mode)"])
-    with col_opt2:
-        cat_encoding = st.selectbox("문자열 변환 방식", ["Label Encoding (숫자화)", "One-Hot Encoding (더미변수)"])
+    with st.expander("⚙️ 고급 전처리 설정 (결측치/인코딩)", expanded=False):
+        col_opt1, col_opt2 = st.columns(2)
+        with col_opt1:
+            impute_strategy = st.selectbox("결측치 처리", ["중앙값(Median)", "평균값(Mean)", "0으로 채우기", "최빈값(Mode)"])
+        with col_opt2:
+            cat_encoding = st.selectbox("인코딩 방식", ["Label Encoding", "One-Hot Encoding"])
 
-    # 매핑
     strategy_map = {"중앙값(Median)": "median", "평균값(Mean)": "mean", "0으로 채우기": "constant", "최빈값(Mode)": "most_frequent"}
     
     # -------------------------------------------------------
     # [4] 전처리 실행
     # -------------------------------------------------------
     st.divider()
-    if st.button("🚀 전처리 실행 및 데이터 생성", type="primary"):
+    if st.button("🚀 전처리 실행 및 데이터 생성", type="primary", use_container_width=True):
         try:
-            # 1. 선택된 컬럼만으로 데이터 필터링
             final_cols = feature_cols + [target_col]
             df_final = df_raw[final_cols].copy()
             
             X = df_final[feature_cols]
             y = df_final[target_col]
 
-            # 2. 수치형/범주형 구분
             num_cols = X.select_dtypes(include=[np.number]).columns
             cat_cols = X.select_dtypes(exclude=[np.number]).columns
 
-            # 3. 결측치 처리 (Imputer)
             imputer_args = {"strategy": strategy_map[impute_strategy]}
             if strategy_map[impute_strategy] == "constant":
                 imputer_args["fill_value"] = 0
                 
             imputer = SimpleImputer(**imputer_args)
             
-            # 수치형 처리
             if len(num_cols) > 0:
                 X[num_cols] = imputer.fit_transform(X[num_cols])
-                # 스케일링 (표준화)
                 scaler = StandardScaler()
                 X[num_cols] = scaler.fit_transform(X[num_cols])
             else:
                 scaler = None
 
-            # 4. 범주형 처리 (Encoding)
             encoders = {}
             for col in cat_cols:
-                # 결측은 'unknown'으로
                 X[col] = X[col].fillna("unknown").astype(str)
-                
                 if "Label" in cat_encoding:
                     le = LabelEncoder()
                     X[col] = le.fit_transform(X[col])
                     encoders[col] = le
-                else: # One-Hot
+                else:
                     ohe = OneHotEncoder(sparse_output=False, drop="first", handle_unknown='ignore')
                     ohe_data = ohe.fit_transform(X[[col]])
                     new_cols = [f"{col}_{c}" for c in ohe.categories_[0][1:]]
@@ -529,24 +550,20 @@ elif st.session_state.step == 3:
                     X = pd.concat([X.drop(columns=[col]), X_ohe], axis=1)
                     encoders[col] = (ohe, new_cols)
 
-            # 5. 결과 저장
             st.session_state.preprocess["imputer"] = imputer
             st.session_state.preprocess["scaler"] = scaler
             st.session_state.preprocess["encoders"] = encoders
-            st.session_state.preprocess["feature_cols"] = list(X.columns) # 최종 가공된 컬럼명
+            st.session_state.preprocess["feature_cols"] = list(X.columns)
             
             st.session_state.data["X_processed"] = X
             st.session_state.data["y_processed"] = y
             
-            st.success("✅ 전처리가 완료되었습니다! 이제 '모델 학습' 단계로 이동하세요.")
-            
-            # 데이터 미리보기
-            st.markdown(f"**처리된 데이터: {X.shape[1]}개 변수 (One-Hot 확장 포함)**")
+            st.success("데이터 전처리 완료!")
             st.dataframe(X.head(3), use_container_width=True)
 
         except Exception as e:
-            st.error(f"전처리 중 오류 발생: {e}")
-            st.write("힌트: 데이터에 숫자가 아닌 값이 섞여있거나, 너무 많은 결측치가 있을 수 있습니다.")
+            st.error(f"전처리 오류: {e}")
+            
 # ----------------------
 # 단계 4：모델 학습（修复 stratify 参数错误）
 # ----------------------
