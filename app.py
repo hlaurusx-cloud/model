@@ -97,55 +97,85 @@ if st.session_state.step == 0:
     """)
 
 # ----------------------
-# 단계 1：데이터 업로드（단일 파일만 업로드）
+# 단계 1：데이터 업로드（단일 파일 또는 기본 파일）
 # ----------------------
 elif st.session_state.step == 1:
-    st.subheader("📤 데이터 업로드（단일 파일）")
-    st.markdown("지원 형식：CSV、Parquet、Excel（.xlsx/.xls）")
-    st.markdown("⚠️  파일에 타겟 열（예측할 변수）과 특징 열（예측에 사용할 변수）이 모두 포함되어야 합니다")
+    st.subheader("📤 데이터 업로드")
     
-    # 단일 파일 업로드 컴포넌트
-    uploaded_file = st.file_uploader("데이터 파일 선택", type=["csv", "parquet", "xlsx", "xls"], key="single_file")
+    # 탭을 사용하여 '파일 업로드'와 '기본 데이터 사용'을 구분
+    tab1, tab2 = st.tabs(["📂 내 파일 업로드", "💾 서버/기본 데이터 사용"])
     
-    if uploaded_file is not None:
-        try:
-            # 다양한 형식 파일 읽기
-            if uploaded_file.name.endswith(".csv"):
-                df_merged = pd.read_csv(uploaded_file)
-            elif uploaded_file.name.endswith(".parquet"):
-                df_merged = pd.read_parquet(uploaded_file)
-            elif uploaded_file.name.endswith((".xlsx", ".xls")):
-                df_merged = pd.read_excel(uploaded_file)
-            else:
-                st.error("지원하지 않는 파일 형식입니다！CSV/Parquet/Excel 파일을 업로드하세요")
-                st.stop()
-            
-            # 데이터 저장
-            st.session_state.data["merged"] = df_merged
-            
-            # 데이터 정보 표시
-            st.success(f"데이터 업로드 성공！")
-            st.metric("데이터 양", f"{len(df_merged):,} 행 × {len(df_merged.columns)} 열")
-            st.markdown("### 데이터 미리보기")
-            st.dataframe(df_merged.head(5), use_container_width=True)
-            
-            # 데이터 기본 정보 추가 표시
-            st.markdown("### 데이터 기본 정보")
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.write("**열 이름**")
-                st.write(", ".join(df_merged.columns.tolist()[:10]) + ("..." if len(df_merged.columns) > 10 else ""))
-            with col2:
-                st.write("**결측값 총 개수**")
-                st.write(f"{df_merged.isnull().sum().sum()} 개")
-            with col3:
-                st.write("**데이터 유형**")
-                st.write(df_merged.dtypes.value_counts().to_string())
-            
-            # 下一步 안내
-            st.divider()
-            st.info("📊 데이터 탐색을 위해 왼쪽 사이드바에서「데이터 시각화」단계로 이동하세요")
+    # --- 기능 1: 사용자가 직접 업로드 ---
+    with tab1:
+        st.markdown("지원 형식：CSV、Parquet、Excel（.xlsx/.xls）")
+        uploaded_file = st.file_uploader("데이터 파일 선택", type=["csv", "parquet", "xlsx", "xls"], key="single_file")
+    
+    # --- 기능 2: 서버에 있는 기본 CSV 파일 로드 ---
+    with tab2:
+        # 여기에 실제 CSV 파일명을 입력하세요 (예: "korea_housing.csv")
+        DEFAULT_FILE_PATH = "data.csv" 
         
+        st.markdown(f"**서버에 저장된 기본 데이터 파일:** `{DEFAULT_FILE_PATH}`")
+        load_default = st.button("기본 데이터 로드 및 사용", type="primary")
+        
+        # 기본 파일 로드 버튼이 눌렸거나, 업로드 파일이 있는 경우 처리
+        target_file = None
+        load_source = ""
+        
+        if uploaded_file is not None:
+            target_file = uploaded_file
+            load_source = "upload"
+        elif load_default:
+            if os.path.exists(DEFAULT_FILE_PATH):
+                target_file = DEFAULT_FILE_PATH
+                load_source = "default"
+            else:
+                st.error(f"⚠️ 파일을 찾을 수 없습니다: {DEFAULT_FILE_PATH}")
+
+    # --- 데이터 읽기 및 저장 공통 로직 ---
+    if target_file is not None:
+        try:
+            df_merged = None
+            # 1. 업로드된 파일 읽기
+            if load_source == "upload":
+                if target_file.name.endswith(".csv"):
+                    df_merged = pd.read_csv(target_file)
+                elif target_file.name.endswith(".parquet"):
+                    df_merged = pd.read_parquet(target_file)
+                elif target_file.name.endswith((".xlsx", ".xls")):
+                    df_merged = pd.read_excel(target_file)
+            # 2. 로컬 기본 파일 읽기 (CSV 기준)
+            elif load_source == "default":
+                df_merged = pd.read_csv(target_file)
+
+            if df_merged is not None:
+                # 데이터 저장
+                st.session_state.data["merged"] = df_merged
+                
+                # 데이터 정보 표시
+                st.success(f"데이터 로드 성공! ({'사용자 업로드' if load_source == 'upload' else '기본 데이터'})")
+                st.metric("데이터 양", f"{len(df_merged):,} 행 × {len(df_merged.columns)} 열")
+                
+                st.markdown("### 데이터 미리보기")
+                st.dataframe(df_merged.head(5), use_container_width=True)
+                
+                # 데이터 기본 정보 표시
+                st.markdown("### 데이터 기본 정보")
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.write("**열 이름**")
+                    st.write(", ".join(df_merged.columns.tolist()[:10]) + ("..." if len(df_merged.columns) > 10 else ""))
+                with col2:
+                    st.write("**결측값 총 개수**")
+                    st.write(f"{df_merged.isnull().sum().sum()} 개")
+                with col3:
+                    st.write("**데이터 유형**")
+                    st.write(df_merged.dtypes.value_counts().to_string())
+                
+                # 다음 단계 안내
+                st.divider()
+                st.info("📊 데이터 탐색을 위해 왼쪽 사이드바에서「데이터 시각화」단계로 이동하세요")
+            
         except Exception as e:
             st.error(f"데이터 읽기 실패：{str(e)}")
 
