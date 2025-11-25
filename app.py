@@ -905,10 +905,20 @@ elif st.session_state.step == 6:
         # 모델 해석（특징 중요도：의사결정나무 기반）
         st.divider()
         st.markdown("### 모델 해석：핵심 특징 중요도")
-        feature_importance = pd.DataFrame({
-            "특징명": st.session_state.preprocess["feature_cols"],
-            "중요도": dt_model.feature_importances_  # 의사결정나무의 특징 중요도
-        }).sort_values("중요도", ascending=False).head(10)
         
-        fig_importance = px.bar(feature_importance, x="중요도", y="특징명", orientation="h", color="중요도", color_continuous_scale="viridis")
-        st.plotly_chart(fig_importance, use_container_width=True)
+        # 의사결정나무 모델이 있고 특징 중요도가 있을 경우에만 표시
+        if (dt_model is not None and 
+            hasattr(dt_model, 'feature_importances_') and 
+            len(dt_model.feature_importances_) > 0):
+            
+            feature_importance = pd.DataFrame({
+                "특징명": st.session_state.preprocess["feature_cols"],
+                "중요도": dt_model.feature_importances_
+            }).sort_values("중요도", ascending=False).head(10)
+            
+            fig_importance = px.bar(feature_importance, x="중요도", y="특징명", 
+                                  orientation="h", color="중요도", 
+                                  color_continuous_scale="viridis")
+            st.plotly_chart(fig_importance, use_container_width=True)
+        else:
+            st.info("의사결정나무 모델의 특징 중요도를 표시할 수 없습니다.")
