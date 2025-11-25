@@ -345,7 +345,7 @@ elif st.session_state.step == 2:
         st.info("🔧 데이터 전처리를 위해 왼쪽 사이드바에서「데이터 전처리」단계로 이동하세요")
 
 # ----------------------
-# 3. 데이터 전처리（Step 3） - 스마트 타겟 필터링 & Stepwise
+# 3. 데이터 전처리（Step 3） - 오류 수정 (안전한 변수 선택 로직)
 # ----------------------
 elif st.session_state.step == 3:
     st.subheader("🛠 데이터 전처리 및 변수 선택 (Smart Stepwise)")
@@ -361,119 +361,130 @@ elif st.session_state.step == 3:
     # -------------------------------------------------------
     st.markdown("### 1️⃣ 타겟 변수(예측 목표) 설정")
     
-    # [수정] 타겟 후보군 필터링 로직
+    # 타겟 후보군 필터링 (ID나 상수 제외)
     target_candidates = []
-    dropped_candidates = [] # 제외된 컬럼 확인용
+    dropped_candidates = [] 
 
     for col in df_raw.columns:
-        # 조건 1: 모든 값이 다 다른 경우 (ID일 확률 높음) -> 데이터가 50행 이상일 때만 적용
-        if len(df_raw) > 100 and df_raw[col].nunique() == len(df_raw):
+        # 조건 1: 모든 값이 다 다른 경우 (ID일 확률 높음) -> 50행 이상일 때만 체크
+        if len(df_raw) > 50 and df_raw[col].nunique() == len(df_raw):
             dropped_candidates.append(col)
             continue
-        # 조건 2: 값이 하나밖에 없는 경우 (상수) -> 예측 의미 없음
+        # 조건 2: 값이 하나밖에 없는 경우 (상수)
         if df_raw[col].nunique() <= 1:
             dropped_candidates.append(col)
             continue
-        
         target_candidates.append(col)
     
-    # 만약 필터링 결과 남은게 없으면 원본 전체 사용 (안전장치)
     if not target_candidates:
         target_candidates = df_raw.columns.tolist()
 
-    # 세션 상태 초기화 및 유효성 검사
+    # 세션 상태 초기화
     if "target_col_temp" not in st.session_state:
         st.session_state.target_col_temp = target_candidates[0]
     
-    # 이전에 선택한 타겟이 필터링되어 사라졌을 경우 대비
+    # 이전에 선택한 타겟이 목록에 없으면 리셋
     if st.session_state.target_col_temp not in target_candidates:
          st.session_state.target_col_temp = target_candidates[0]
 
     col_t1, col_t2 = st.columns([2, 1])
     with col_t1:
         target_col = st.selectbox(
-            "예측할 타겟 컬럼 선택 (ID 등 무의미한 변수는 자동 제외됨)", 
+            "예측할 타겟 컬럼 선택", 
             options=target_candidates,
             index=target_candidates.index(st.session_state.target_col_temp),
             key="target_selector"
         )
+    with col_t2:
+        if dropped_candidates:
+            with st.popover("🗑 제외된 컬럼 보기"):
+                st.write("ID 또는 상수로 판단되어 목록에서 제외됨:")
+                st.write(dropped_candidates)
 
-
-    # 선택값 업데이트
     st.session_state.target_col_temp = target_col
     st.session_state.preprocess["target_col"] = target_col
 
     st.divider()
 
     # -------------------------------------------------------
-    # [2] 스마트 변수 선택 (Stepwise / Feature Importance)
+    # [2] 스마트 변수 선택 (Stepwise) - [오류 수정된 부분]
     # -------------------------------------------------------
     st.markdown("### 2️⃣ 변수 선택 (Stepwise)")
     
-    all_cols = df_raw.columns.tolist() # Feature 후보는 전체에서 가져오되 타겟만 뺌
+    all_cols = df_raw.columns.tolist()
     
-    # 세션 상태에 선택된 변수 리스트 초기화
+    # 선택된 변수 리스트 초기화
     if "selected_features_temp" not in st.session_state:
-        # 기본값: 타겟 제외한 나머지 중 ID같은거 뺀 것들
         st.session_state.selected_features_temp = [c for c in target_candidates if c != target_col]
 
     col_tool1, col_tool2 = st.columns([1, 3])
     
     with col_tool1:
-        # 자동 선택 버튼
-        st.write("") # 줄맞춤용
+        st.write("") 
         if st.button("🤖 AI 스마트 변수 선택\n(Stepwise 실행)", type="primary", use_container_width=True):
-            with st.spinner("데이터 분석 중... 최적의 변수를 찾고 있습니다..."):
+            with st.spinner("데이터 분석 중..."):
                 try:
-                    # 1. 분석용 임시 데이터 준비
+                    # [수정 핵심] 분석용 데이터는 안전하게 복사 후 단순 처리
                     temp_df = df_raw.copy()
                     
-                    # 결측치 임시 처리
+                    # 1. 수치형 처리: NaN을 0으로 채움 (오류 방지)
                     num_temp = temp_df.select_dtypes(include=[np.number]).columns
+                    temp_df[num_temp] = temp_df[num_temp].fillna(0)
+                    
+                    # 2. 범주형 처리: NaN을 "unknown"으로 채우고 숫자 변환
                     cat_temp = temp_df.select_dtypes(exclude=[np.number]).columns
-                    
-                    if len(num_temp) > 0:
-                        imputer = SimpleImputer(strategy='mean')
-                        temp_df[num_temp] = imputer.fit_transform(temp_df[num_temp])
-                    
                     for c in cat_temp:
+                        temp_df[c] = temp_df[c].fillna("unknown")
+                        # pd.factorize는 안전하게 1차원 배열 반환
                         temp_df[c] = pd.factorize(temp_df[c])[0]
                     
-                    # X, y 분리
+                    # 3. X, y 분리
+                    # 타겟 제외
                     X_temp = temp_df.drop(columns=[target_col], errors='ignore')
-                    # X에서도 ID같은거 빼주면 좋음
-                    X_temp = X_temp[[c for c in X_temp.columns if c in target_candidates]] # 타겟 후보군이었던 애들만 Feature 후보로
+                    
+                    # ID 컬럼 등(target_candidates에 없는 것)도 X에서 제외
+                    valid_features = [c for c in X_temp.columns if c in target_candidates]
+                    X_temp = X_temp[valid_features]
 
                     y_temp = temp_df[target_col]
                     
-                    # 2. 모델 기반 중요도 산출
+                    # 4. 모델 중요도 산출
                     from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
                     from sklearn.feature_selection import SelectFromModel
 
-                    if st.session_state.task == "logit" or (y_temp.dtype == 'object' or len(y_temp.unique()) < 10):
+                    # 타겟 데이터 타입 확인
+                    is_classification = False
+                    if st.session_state.task == "logit":
+                        is_classification = True
+                    elif y_temp.dtype == 'object' or len(y_temp.unique()) < 20:
+                        is_classification = True
+                    
+                    if is_classification:
+                        # 분류 모델
                         model_sel = RandomForestClassifier(n_estimators=50, random_state=42, n_jobs=-1)
                         if y_temp.dtype == 'object': 
                             y_temp = pd.factorize(y_temp)[0]
                     else:
+                        # 회귀 모델
                         model_sel = RandomForestRegressor(n_estimators=50, random_state=42, n_jobs=-1)
 
                     model_sel.fit(X_temp, y_temp)
                     
-                    # 3. 중요도 기반 선택
+                    # 5. 중요도 평균 이상인 변수 선택
                     selector = SelectFromModel(model_sel, prefit=True, threshold="mean")
                     selected_indices = selector.get_support(indices=True)
                     recommended_features = X_temp.columns[selected_indices].tolist()
                     
                     st.session_state.selected_features_temp = recommended_features
-                    st.success(f"✅ 분석 완료! {len(recommended_features)}개 변수 추천됨.")
+                    st.success(f"✅ 분석 완료! {len(recommended_features)}개 중요 변수 선택됨.")
                     st.rerun()
 
                 except Exception as e:
-                    st.error(f"분석 오류: {e}")
+                    st.error(f"분석 오류 발생: {str(e)}")
+                    st.write("상세 정보: 데이터에 비정상적인 값이 포함되어 있을 수 있습니다.")
 
     with col_tool2:
-        # Multiselect
-        # 옵션 리스트: 타겟 제외, 그리고 기왕이면 ID 같은것도 제외된 목록에서 선택하도록 유도
+        # 멀티 셀렉트 박스
         feature_options = [c for c in target_candidates if c != target_col]
         
         feature_cols = st.multiselect(
@@ -483,7 +494,6 @@ elif st.session_state.step == 3:
             key="feature_multiselect"
         )
 
-    # 최종 변수 확정
     if not feature_cols:
         st.warning("⚠️ 최소한 하나의 변수는 선택해야 합니다.")
         st.stop()
@@ -524,6 +534,7 @@ elif st.session_state.step == 3:
                 
             imputer = SimpleImputer(**imputer_args)
             
+            # 수치형 처리
             if len(num_cols) > 0:
                 X[num_cols] = imputer.fit_transform(X[num_cols])
                 scaler = StandardScaler()
@@ -531,6 +542,7 @@ elif st.session_state.step == 3:
             else:
                 scaler = None
 
+            # 범주형 처리
             encoders = {}
             for col in cat_cols:
                 X[col] = X[col].fillna("unknown").astype(str)
@@ -558,7 +570,8 @@ elif st.session_state.step == 3:
             st.dataframe(X.head(3), use_container_width=True)
 
         except Exception as e:
-            st.error(f"전처리 오류: {e}")
+            st.error(f"전처리 최종 실행 오류: {e}")
+            
             
 # ----------------------
 # 단계 4：모델 학습（修复 stratify 参数错误）
