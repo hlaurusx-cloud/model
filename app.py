@@ -367,7 +367,7 @@ elif st.session_state.step == 3:
 
     for col in df_raw.columns:
         # 조건 1: 모든 값이 다 다른 경우 (ID일 확률 높음) -> 데이터가 50행 이상일 때만 적용
-        if len(df_raw) > 50 and df_raw[col].nunique() == len(df_raw):
+        if len(df_raw) > 100 and df_raw[col].nunique() == len(df_raw):
             dropped_candidates.append(col)
             continue
         # 조건 2: 값이 하나밖에 없는 경우 (상수) -> 예측 의미 없음
@@ -397,11 +397,7 @@ elif st.session_state.step == 3:
             index=target_candidates.index(st.session_state.target_col_temp),
             key="target_selector"
         )
-    with col_t2:
-        if dropped_candidates:
-            with st.popover("🗑 제외된 컬럼 보기"):
-                st.write("타겟으로 부적절하여 목록에서 숨겨진 컬럼들:")
-                st.write(dropped_candidates)
+
 
     # 선택값 업데이트
     st.session_state.target_col_temp = target_col
