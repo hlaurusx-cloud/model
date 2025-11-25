@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import os
 import joblib
 import plotly.express as px
 import plotly.graph_objects as go
@@ -14,7 +15,6 @@ from sklearn.metrics import (
     mean_absolute_error, mean_squared_error, r2_score
 )
 import warnings
-import os
 warnings.filterwarnings("ignore")
 
 # ----------------------
@@ -103,7 +103,7 @@ elif st.session_state.step == 1:
     st.subheader("📤 데이터 업로드")
     
     # 탭을 사용하여 '파일 업로드'와 '기본 데이터 사용'을 구분
-    tab1, tab2 = st.tabs(["📂 내 파일 업로드", "💾 서버/기본 데이터 사용"])
+    tab1, tab2 = st.tabs(["📂 내 파일 업로드", "💾 서버 기본 데이터 사용"])
     
     # --- 기능 1: 사용자가 직접 업로드 ---
     with tab1:
@@ -112,73 +112,51 @@ elif st.session_state.step == 1:
     
     # --- 기능 2: 서버에 있는 기본 CSV 파일 로드 ---
     with tab2:
-        # 여기에 실제 CSV 파일명을 입력하세요 (예: "korea_housing.csv")
-        DEFAULT_FILE_PATH = "data.csv" 
+        # 여기에 지정하신 파일명을 입력했습니다.
+        DEFAULT_FILE_PATH = "combined_loan_data.csv" 
         
-        st.markdown(f"**서버에 저장된 기본 데이터 파일:** `{DEFAULT_FILE_PATH}`")
-        load_default = st.button("기본 데이터 로드 및 사용", type="primary")
+        st.info(f"💡 **기본 데이터 설명**: 대출 관련 통합 데이터 (`{DEFAULT_FILE_PATH}`)")
         
-        # 기본 파일 로드 버튼이 눌렸거나, 업로드 파일이 있는 경우 처리
-        target_file = None
-        load_source = ""
-        
-        if uploaded_file is not None:
-            target_file = uploaded_file
-            load_source = "upload"
-        elif load_default:
+        # 버튼 클릭 시 처리
+        if st.button("기본 데이터 불러오기 (combined_loan_data.csv)", type="primary"):
             if os.path.exists(DEFAULT_FILE_PATH):
-                target_file = DEFAULT_FILE_PATH
-                load_source = "default"
+                # 파일을 읽어서 세션에 저장
+                try:
+                    df_default = pd.read_csv(DEFAULT_FILE_PATH)
+                    st.session_state.data["merged"] = df_default
+                    st.success(f"✅ 기본 데이터 로드 성공! ({len(df_default):,} 행)")
+                    st.rerun()  # 데이터 로드 후 화면 갱신
+                except Exception as e:
+                    st.error(f"파일 읽기 오류: {e}")
             else:
-                st.error(f"⚠️ 파일을 찾을 수 없습니다: {DEFAULT_FILE_PATH}")
+                st.error(f"⚠️ 파일을 찾을 수 없습니다: {DEFAULT_FILE_PATH} (파일이 app.py와 같은 폴더에 있는지 확인하세요)")
 
-    # --- 데이터 읽기 및 저장 공통 로직 ---
-    if target_file is not None:
-        try:
-            df_merged = None
-            # 1. 업로드된 파일 읽기
-            if load_source == "upload":
-                if target_file.name.endswith(".csv"):
-                    df_merged = pd.read_csv(target_file)
-                elif target_file.name.endswith(".parquet"):
-                    df_merged = pd.read_parquet(target_file)
-                elif target_file.name.endswith((".xlsx", ".xls")):
-                    df_merged = pd.read_excel(target_file)
-            # 2. 로컬 기본 파일 읽기 (CSV 기준)
-            elif load_source == "default":
-                df_merged = pd.read_csv(target_file)
-
-            if df_merged is not None:
-                # 데이터 저장
-                st.session_state.data["merged"] = df_merged
-                
-                # 데이터 정보 표시
-                st.success(f"데이터 로드 성공! ({'사용자 업로드' if load_source == 'upload' else '기본 데이터'})")
-                st.metric("데이터 양", f"{len(df_merged):,} 행 × {len(df_merged.columns)} 열")
-                
-                st.markdown("### 데이터 미리보기")
-                st.dataframe(df_merged.head(5), use_container_width=True)
-                
-                # 데이터 기본 정보 표시
-                st.markdown("### 데이터 기본 정보")
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.write("**열 이름**")
-                    st.write(", ".join(df_merged.columns.tolist()[:10]) + ("..." if len(df_merged.columns) > 10 else ""))
-                with col2:
-                    st.write("**결측값 총 개수**")
-                    st.write(f"{df_merged.isnull().sum().sum()} 개")
-                with col3:
-                    st.write("**데이터 유형**")
-                    st.write(df_merged.dtypes.value_counts().to_string())
-                
-                # 다음 단계 안내
-                st.divider()
-                st.info("📊 데이터 탐색을 위해 왼쪽 사이드바에서「데이터 시각화」단계로 이동하세요")
-            
-        except Exception as e:
-            st.error(f"데이터 읽기 실패：{str(e)}")
-
+    # --- 데이터가 로드된 상태인지 확인 및 표시 ---
+    if st.session_state.data.get("merged") is not None:
+        df_merged = st.session_state.data["merged"]
+        
+        st.divider()
+        st.markdown(f"### ✅ 현재 로드된 데이터 ({len(df_merged):,} 행)")
+        st.dataframe(df_merged.head(5), use_container_width=True)
+        
+        # 데이터 기본 정보 표시
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.write("**열 이름 (상위 10개)**")
+            st.write(", ".join(df_merged.columns.tolist()[:10]) + ("..." if len(df_merged.columns) > 10 else ""))
+        with col2:
+            st.write("**결측값 총 개수**")
+            st.write(f"{df_merged.isnull().sum().sum()} 개")
+        with col3:
+            st.write("**데이터 유형**")
+            st.write(df_merged.dtypes.value_counts().to_string())
+        
+        # 업로드/로드 로직 처리 (이미 위에서 처리됨)
+        
+        # 다음 단계 안내
+        st.divider()
+        st.info("📊 데이터 탐색을 위해 왼쪽 사이드바에서 **「데이터 시각화」** 단계로 이동하세요")
+        
 # ----------------------
 # 단계 2：데이터 시각화（新增！히스토그램 기능 추가）
 # ----------------------
