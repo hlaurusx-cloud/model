@@ -675,140 +675,79 @@ elif st.session_state.step == 4:
                 except Exception as e:
                     st.error(f"모델 학습 실패：{str(e)}")
 
-# ----------------------
-# 단계 5：모델 예측（단일/일괄 업로드）
-# ----------------------
-elif st.session_state.step == 5:
-    st.subheader("🎯 모델 예측")
+# -------------------------- 단계 5: 혼합 모델 예측 (완성 버전)--------------------------
+def predict(input_data):
+    """
+    혼합 모델 예측 함수: 선형 회귀와 의사결정 트리의 예측 결과를 가중치에 따라 융합
+    input_data: 전처리가 완료된 입력 데이터 (DataFrame)
+    return: 최종 혼합 예측 결과, 예측 확률 (분류 작업 시 유효, 회귀 작업 시 None)
+    """
+    # 1. 모델 학습 시 사용한 특징 열 추출 (session_state에서 가져오기, 특징 차원 불일치 방지)
+    feature_cols = st.session_state.get("feature_cols", [])
+    if not feature_cols:
+        st.error("특징 열을 찾을 수 없습니다! 먼저 모델 학습을 완료해주세요")
+        return None, None
     
-    # 모델 학습 완료 여부 확인
-    if st.session_state.models["regression"] is None or st.session_state.models["decision_tree"] is None:
-        st.warning("먼저「모델 학습」단계를 완료하세요")
-    else:
-        # 예측 함수（전처리 로직 재사용 + 新模型适配）
-        def predict(input_data):
-            X = input_data.copy()
-            preprocess = st.session_state.preprocess
-            num_cols = X.select_dtypes(include=["int64", "float64"]).columns
-            cat_cols = X.select_dtypes(include=["object", "category"]).columns
-            
-            # 수치형 전처리
-            X[num_cols] = preprocess["imputer"].transform(X[num_cols])
-            X[num_cols] = preprocess["scaler"].transform(X[num_cols])
-            
-            # 범주형 전처리
-            for col in cat_cols:
-                X[col] = X[col].fillna("알 수 없음").astype(str)
-                encoder = preprocess["encoders"][col]
-                
-                if isinstance(encoder, LabelEncoder):
-                    # 미본적 범주 처리
-                    X[col] = X[col].replace([x for x in X[col].unique() if x not in encoder.classes_], "알 수 없음")
-                    if "알 수 없음" not in encoder.classes_:
-                        encoder.classes_ = np.append(encoder.classes_, "알 수 없음")
-                    X[col] = encoder.transform(X[col])
-                else:  # OneHotEncoder
-                    ohe, ohe_cols = encoder
-                    ohe_result = ohe.transform(X[[col]])
-                    X = pd.concat([X.drop(col, axis=1), pd.DataFrame(ohe_result, columns=ohe_cols)], axis=1)
-            
-            # 특징 열 순서 일치 보장
-            X = X[preprocess["feature_cols"]]
-            
-            # 하이브리드모형 예측（가중融合）
-            reg_weight = st.session_state.models["mixed_weights"]["regression"]
-            dt_weight = st.session_state.models["mixed_weights"]["decision_tree"]
-            reg_model = st.session_state.models["regression"]
-            dt_model = st.session_state.models["decision_tree"]
-            
-            if st.session_state.task == "logit":  # 분류 예측
-                reg_proba = reg_model.predict_proba(X)[:, 1]  # 로지스틱 회귀 확률
-                dt_proba = dt_model.predict_proba(X)[:, 1]    # 의사결정나무 확률
-                mixed_proba = reg_weight * reg_proba + dt_weight * dt_proba
-                pred = (mixed_proba >= 0.5).astype(int)
-                return pred, mixed_proba
-            else:  # 회귀 예측
-                reg_pred = reg_model.predict(X)  # 선형 회귀 예측값
-                dt_pred = dt_model.predict(X)    # 의사결정나무 예측값
-                mixed_pred = reg_weight * reg_pred + dt_weight * dt_pred
-                return mixed_pred, None
+    # 입력 데이터에서 학습 시 사용한 특징만 남기기 (차원 오류 방지)
+    X = input_data[feature_cols].copy()
+    
+    # 2. session_state에서 학습 완료된 모델과 가중치 로드 (이전 학습 단계에서 저장한 값)
+    models = st.session_state.get("models", {})
+    if not models or "regression" not in models or "decision_tree" not in models:
+        st.error("모델이 학습되지 않았습니다! 먼저 모델 학습 단계를 완료해주세요")
+        return None, None
+    
+    # 3. 두 모델의 융합 가중치 가져오기 (이전 학습 단계에서 session_state에 저장)
+    reg_weight = models["mixed_weights"]["regression"]  # 선형 회귀 가중치
+    dt_weight = models["mixed_weights"]["decision_tree"]  # 의사결정 트리 가중치
+    
+    # 4. 두 모델로 각각 예측 (분류/회귀 작업 구분)
+    if st.session_state.task == "logit":  # 👉 분류 작업 (예측 확률 + 클래스)
+        # 분류 모델은 확률 반환 (predict_proba): 2번째 열(인덱스 1)을 양성 클래스 확률로 사용
+        reg_prob = models["regression"].predict_proba(X)[:, 1]  # 선형 회귀 양성 클래스 확률
+        dt_prob = models["decision_tree"].predict_proba(X)[:, 1]  # 의사결정 트리 양성 클래스 확률
         
-        # 예측 방식 선택
-        predict_mode = st.radio("예측 방식", options=["단일 데이터 입력", "일괄 업로드 CSV"])
+        # 가중치에 따른 확률 융합 (가중 평균)
+        mixed_prob = reg_weight * reg_prob + dt_weight * dt_prob
+        # 확률을 클래스로 변환 (임계값 0.5, 필요에 따라 조정 가능)
+        mixed_pred = (mixed_prob > 0.5).astype(int)
         
-        # 단일 입력 예측
-        if predict_mode == "단일 데이터 입력":
-            st.markdown("#### 단일 데이터 입력（특징값을 입력하세요）")
-            feature_cols = st.session_state.preprocess["feature_cols"]
-            input_data = {}
-            
-            # 특징 유형에 따라 동적으로 입력 폼 생성
-            with st.form("single_pred_form"):
-                cols = st.columns(3)
-                for i, col in enumerate(feature_cols[:9]):  # 최대 9개 특징 표시（화면 혼잡 방지）
-                    with cols[i % 3]:
-                        # 특징 유형 판단（수치/범주）
-                        if col in st.session_state.data["X_processed"].select_dtypes(include=["int64", "float64"]).columns:
-                            input_data[col] = st.number_input(col, value=0.0)
-                        else:
-                            # 범주형 특징：학습集中의 고유값을 옵션으로 제시
-                            unique_vals = st.session_state.data["X_processed"][col].unique()[:10]  # 최대 10개 옵션
-                            input_data[col] = st.selectbox(col, options=unique_vals)
-                
-                # 예측 제출
-                submit_btn = st.form_submit_button("예측 시작")
-            
-            if submit_btn:
-                input_df = pd.DataFrame([input_data])
-                pred, proba = predict(input_df)
-                
-                st.divider()
-                st.markdown("### 예측 결과")
-                if st.session_state.task == "logit":
-                    st.metric("예측 결과", "양성" if pred[0] == 1 else "음성")
-                    st.metric("양성 확률", f"{proba[0]:.3f}" if proba is not None else "-")
-                else:  # 의사결정나무（회귀）
-                    st.metric("예측 결과", f"{pred[0]:.2f}")
+        # 반환: 예측 클래스 (0/1), 예측 확률 (0-1)
+        return mixed_pred, mixed_prob
+    
+    else:  # 👉 회귀 작업 (연속값 예측)
+        # 회귀 모델은 직접 예측값 반환 (predict)
+        reg_pred = models["regression"].predict(X)  # 선형 회귀 예측값
+        dt_pred = models["decision_tree"].predict(X)  # 의사결정 트리 예측값
         
-        # 일괄 업로드 예측
-        else:
-            st.markdown("#### 일괄 업로드 CSV 예측")
-            uploaded_file = st.file_uploader("특징 열을 포함한 CSV 파일 업로드", type=["csv"])
-            
-            if uploaded_file is not None:
-                batch_df = pd.read_csv(uploaded_file)
-                st.metric("업로드 데이터 양", f"{len(batch_df):,} 행")
-                st.dataframe(batch_df.head(3), use_container_width=True)
-                
-                # 특징 열 일치 확인
-                required_features = st.session_state.preprocess["feature_cols"]
-                missing_features = [col for col in required_features if col not in batch_df.columns]
-                if missing_features:
-                    st.warning(f"업로드된 파일에 필요한 특징 열이 없습니다：{', '.join(missing_features)}")
-                else:
-                    if st.button("일괄 예측 시작"):
-                        with st.spinner("예측 중..."):
-                            pred, proba = predict(batch_df)
-                            batch_df["하이브리드모형 예측 결과"] = pred
-                            if proba is not None:
-                                batch_df["양성 확률"] = proba.round(3)
-                            
-                            st.divider()
-                            st.markdown("### 일괄 예측 결과")
-                            st.dataframe(
-                                batch_df[["하이브리드모형 예측 결과"] + (["양성 확률"] if proba is not None else []) + feature_cols[:3]],
-                                use_container_width=True
-                            )
-                            
-                            # 결과 다운로드
-                            csv = batch_df.to_csv(index=False, encoding="utf-8-sig")
-                            st.download_button(
-                                label="예측 결과 다운로드",
-                                data=csv,
-                                file_name="하이브리드모형_일괄예측결과.csv",
-                                mime="text/csv"
-                            )
+        # 가중치에 따른 예측값 융합 (가중 평균)
+        mixed_pred = reg_weight * reg_pred + dt_weight * dt_pred
+        
+        # 회귀 작업은 확률이 없으므로, 예측값과 None 반환
+        return mixed_pred, None
 
+
+# -------------------------- (선택 사항) 예측 결과 호출 예시 (UI 로직에 맞게 조정)--------------------------
+# UI에서 예측을触发하려면 아래 로직을 추가/수정하세요 (기존 버튼과 흐름에 맞춰调整)
+if "models" in st.session_state and st.button("예측 시작"):
+    # 전처리가 완료된 데이터 가져오기 (실제 전처리 후 데이터 변수명으로替换)
+    input_data = st.session_state.get("preprocessed_data", None)
+    if input_data is not None and not input_data.empty:
+        pred_result, pred_prob = predict(input_data)
+        
+        # 예측 결과 표시 (작업 유형에 맞게调整)
+        st.subheader("예측 결과")
+        if st.session_state.task == "logit":
+            # 분류 결과: 예측 클래스 + 양성 클래스 확률 표시
+            input_data["예측 클래스"] = pred_result
+            input_data["양성 클래스 확률"] = pred_prob.round(3)
+            st.dataframe(input_data[["예측 클래스", "양성 클래스 확률"] + feature_cols], use_container_width=True)
+        else:
+            # 회귀 결과: 예측값 표시
+            input_data["예측값"] = pred_result.round(3)
+            st.dataframe(input_data[["예측값"] + feature_cols], use_container_width=True)
+    else:
+        st.warning("먼저 데이터를 업로드하고 전처리를 완료해주세요!")
 # ----------------------
 # 단계 6：성능 평가（하이브리드모형 vs 단일 모형）
 # ----------------------
